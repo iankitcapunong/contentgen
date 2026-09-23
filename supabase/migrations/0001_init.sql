@@ -247,8 +247,12 @@ on conflict (id) do nothing;
 
 -- -----------------------------------------------------------------------------
 -- 6. Convenience view — what the pipeline is doing right now
+--
+--    security_invoker makes the view obey the RLS on jobs/scenes. Without it a
+--    view runs as its owner, and the public (anon) key can read every job
+--    through /rest/v1/pipeline_status even though the tables are locked.
 -- -----------------------------------------------------------------------------
-create or replace view pipeline_status as
+create or replace view pipeline_status with (security_invoker = true) as
 select
   j.id, j.title, j.status, j.attempts, j.cost_usd,
   j.status_changed_at,
