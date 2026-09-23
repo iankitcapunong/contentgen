@@ -370,7 +370,7 @@
 </aside>
 
 <dialog id="settings">
-  <form method="dialog" id="settingsForm">
+  <form id="settingsForm">
     <h3>Connect to n8n</h3>
     <p class="muted" style="margin:0">Import <span class="mono">workflows/10-dashboard-api.json</span> into n8n, activate it, and paste its <b>Production URL</b> and the <span class="mono">dashboard_key</span> from its Config node.</p>
     <label>Webhook URL
@@ -379,10 +379,11 @@
     <label>Dashboard key
       <input type="password" id="cfgKey" placeholder="The dashboard_key from the Config node" required>
     </label>
-    <p class="hint" style="margin:0">Saved in this browser only.</p>
+    <div class="errbox" id="cfgErr" hidden></div>
+    <p class="hint" style="margin:0">Checked, then remembered in this browser, so you won't be asked again.</p>
     <div class="actions">
-      <button class="btn" value="cancel" formnovalidate>Cancel</button>
-      <button class="btn primary" id="saveCfg" value="save">Save &amp; connect</button>
+      <button class="btn" type="button" id="cancelCfg">Cancel</button>
+      <button class="btn primary" type="submit" id="saveCfg">Save &amp; connect</button>
     </div>
   </form>
 </dialog>
@@ -396,7 +397,7 @@
   const REFRESH_MS = 20000;
 
   const load = () => { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch { return {}; } };
-  const save = v => { try { localStorage.setItem(STORE, JSON.stringify(v)); } catch {} };
+  const save = v => { try { localStorage.setItem(STORE, JSON.stringify(v)); return true; } catch { return false; } };
   let settings = load();
 
   // Order matters: each stage claims from the previous stage's *_ready status.
@@ -448,14 +449,14 @@
     toast.t = setTimeout(() => t.className = 'toast', 3500);
   }
 
-  async function api(action, extra = {}) {
-    if (!settings.url || !settings.key) throw new Error('Open Settings and connect to n8n first.');
+  async function api(action, extra = {}, conn = settings) {
+    if (!conn.url || !conn.key) throw new Error('Open Settings and connect to n8n first.');
     let res;
     try {
-      res = await fetch(settings.url, {
+      res = await fetch(conn.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: settings.key, action, ...extra }),
+        body: JSON.stringify({ key: conn.key, action, ...extra }),
       });
     } catch {
       throw new Error("Couldn't reach n8n. Check the webhook URL and that workflow 10 is active.");
@@ -787,14 +788,37 @@
   function openSettings() {
     $('cfgUrl').value = settings.url || '';
     $('cfgKey').value = settings.key || '';
+    $('cfgErr').hidden = true;
     settingsDlg.showModal();
   }
   $('settingsBtn').onclick = openSettings;
-  settingsDlg.addEventListener('close', () => {
-    if (settingsDlg.returnValue !== 'save') return;
-    settings = { ...settings, url: $('cfgUrl').value.trim(), key: $('cfgKey').value };
-    save(settings);
-    refresh();
+  $('cancelCfg').onclick = () => settingsDlg.close();
+
+  // Test the connection before remembering it, so a typo never gets saved
+  // and the dialog never has to come back on the next visit.
+  $('settingsForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const conn = { url: $('cfgUrl').value.trim(), key: $('cfgKey').value.trim() };
+    const btn = $('saveCfg');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span> Checking…';
+    $('cfgErr').hidden = true;
+    try {
+      await api('status', {}, conn);
+      settings = { ...settings, ...conn };
+      const kept = save(settings);
+      settingsDlg.close();
+      toast(kept
+        ? 'Connected. You will stay connected in this browser.'
+        : 'Connected, but this browser blocks saving site data, so you will be asked again next visit.', !kept);
+      refresh();
+    } catch (err) {
+      $('cfgErr').textContent = err.message;
+      $('cfgErr').hidden = false;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Save & connect';
+    }
   });
 
   $('themeBtn').onclick = () => {
