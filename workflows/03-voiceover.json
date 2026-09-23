@@ -1,0 +1,416 @@
+{
+  "name": "CG 03 — Voiceover",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cg03-trigger",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-840, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "supabase_url",
+              "value": "https://YOUR_PROJECT.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "c2",
+              "name": "voice_id",
+              "value": "YOUR_ELEVENLABS_VOICE_ID",
+              "type": "string"
+            },
+            {
+              "id": "c3",
+              "name": "tts_model",
+              "value": "eleven_multilingual_v2",
+              "type": "string"
+            },
+            {
+              "id": "c4",
+              "name": "stability",
+              "value": 0.5,
+              "type": "number"
+            },
+            {
+              "id": "c5",
+              "name": "similarity_boost",
+              "value": 0.75,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg03-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-620, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.supabase_url }}/rest/v1/rpc/claim_job",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"p_target\": \"script_ready\", \"p_next\": \"voicing\" }",
+        "options": {}
+      },
+      "id": "cg03-claim",
+      "name": "Claim Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-400, 300],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg03-has-job",
+      "name": "Got a job?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-180, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "job_id",
+              "value": "=eq.{{ $json.id }}"
+            },
+            {
+              "name": "order",
+              "value": "scene_number.asc"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg03-get-scenes",
+      "name": "Get Scenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [40, 220],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "cg03-loop",
+      "name": "Loop Scenes",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [260, 220],
+      "notes": "Output 0 = done, output 1 = each scene. Batch size 1 keeps ElevenLabs concurrency at 1."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.elevenlabs.io/v1/text-to-speech/{{ $('Config').first().json.voice_id }}/with-timestamps",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify($json.narration) }},\n  \"model_id\": \"{{ $('Config').first().json.tts_model }}\",\n  \"voice_settings\": {\n    \"stability\": {{ $('Config').first().json.stability }},\n    \"similarity_boost\": {{ $('Config').first().json.similarity_boost }}\n  }\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "cg03-tts",
+      "name": "ElevenLabs TTS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 320],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ELEVENLABS_CRED",
+          "name": "ElevenLabs"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput",
+      "notes": "The /with-timestamps variant is deliberate: it returns character-level alignment, which gives us the EXACT audio duration. Everything in the render timeline is built from that number (PLAN 7.2)."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turn the base64 payload into real binary, and pull the exact duration out of\n// the character alignment. That duration is what the whole timeline is built\n// from later — guessing it is how these pipelines end up out of sync.\nconst scene = $('Loop Scenes').first().json;\nconst res   = $input.first().json;\n\nconst b64 = res.audio_base64 || res.audio;\nif (!b64) throw new Error('ElevenLabs returned no audio for scene ' + scene.scene_number);\n\nfunction durationFrom(res) {\n  const a = res.alignment || res.normalized_alignment;\n  const ends = a && a.character_end_times_seconds;\n  if (Array.isArray(ends) && ends.length) return Math.max(...ends);\n  return null;\n}\n\nlet duration = durationFrom(res);\nlet estimated = false;\n\nif (!duration || !isFinite(duration) || duration <= 0) {\n  // Fall back to a words-per-minute estimate rather than failing the job, but\n  // flag it so a desynced video is traceable to this scene.\n  const words = String(scene.narration || '').trim().split(/\\s+/).filter(Boolean).length;\n  duration = Math.max(1.5, (words / 150) * 60);\n  estimated = true;\n}\n\nconst buffer = Buffer.from(b64, 'base64');\nconst fileName = scene.scene_number + '.mp3';\n\nreturn [{\n  json: {\n    scene_id:     scene.id,\n    job_id:       scene.job_id,\n    scene_number: scene.scene_number,\n    duration_sec: Math.round(duration * 1000) / 1000,\n    estimated,\n    file_name:    fileName\n  },\n  binary: {\n    data: await this.helpers.prepareBinaryData(buffer, fileName, 'audio/mpeg')\n  }\n}];"
+      },
+      "id": "cg03-extract",
+      "name": "Extract Audio + Duration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.supabase_url }}/storage/v1/object/audio/{{ $json.job_id }}/{{ $json.file_name }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-upsert",
+              "value": "true"
+            },
+            {
+              "name": "Content-Type",
+              "value": "audio/mpeg"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "cg03-upload",
+      "name": "Upload to Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 320],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "notes": "x-upsert:true makes a replay overwrite instead of 409-ing."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes?id=eq.{{ $('Extract Audio + Duration').first().json.scene_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ audio_url: $('Config').first().json.supabase_url + '/storage/v1/object/public/audio/' + $('Extract Audio + Duration').first().json.job_id + '/' + $('Extract Audio + Duration').first().json.file_name, audio_duration_sec: $('Extract Audio + Duration').first().json.duration_sec, status: 'voiced' }) }}",
+        "options": {}
+      },
+      "id": "cg03-update-scene",
+      "name": "Update Scene",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 320],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "job_id",
+              "value": "=eq.{{ $('Claim Job').first().json.id }}"
+            },
+            {
+              "name": "select",
+              "value": "scene_number,audio_duration_sec,audio_url"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg03-reread",
+      "name": "Re-read Scenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 120],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "Source of truth for the total, rather than trusting in-memory loop state."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Every scene must have audio before we advance. A partial voiceover would\n// produce a video with silent gaps, which is worse than a failed job.\nconst rows = $input.all().map(i => i.json);\nconst missing = rows.filter(r => !r.audio_url || !r.audio_duration_sec);\n\nif (missing.length) {\n  throw new Error(missing.length + ' of ' + rows.length + ' scenes have no audio: scenes ' + missing.map(m => m.scene_number).join(', '));\n}\n\nconst total = rows.reduce((sum, r) => sum + Number(r.audio_duration_sec || 0), 0);\n\nreturn [{\n  json: {\n    job_id: $('Claim Job').first().json.id,\n    voice_duration_sec: Math.round(total * 1000) / 1000,\n    scene_count: rows.length\n  }\n}];"
+      },
+      "id": "cg03-sum",
+      "name": "Total Duration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 120],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $json.job_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'voice_ready', voice_duration_sec: $json.voice_duration_sec, claimed_at: null, last_error: null }) }}",
+        "options": {}
+      },
+      "id": "cg03-ready",
+      "name": "Mark voice_ready",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 120],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $('Claim Job').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": {{ JSON.stringify($('Claim Job').first().json.attempts >= 3 ? 'failed' : 'script_ready') }}, \"claimed_at\": null, \"last_error\": {{ JSON.stringify(String($json.error?.message || $json.error || 'voiceover failed').slice(0,500)) }} }",
+        "options": {}
+      },
+      "id": "cg03-fail",
+      "name": "Retry or Fail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 520],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "Scenes already voiced keep their audio_url; a retry re-voices all of them. Cheap enough at TTS prices not to bother with per-scene resume."
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Claim Job", "type": "main", "index": 0 }]]
+    },
+    "Claim Job": {
+      "main": [[{ "node": "Got a job?", "type": "main", "index": 0 }]]
+    },
+    "Got a job?": {
+      "main": [[{ "node": "Get Scenes", "type": "main", "index": 0 }], []]
+    },
+    "Get Scenes": {
+      "main": [[{ "node": "Loop Scenes", "type": "main", "index": 0 }]]
+    },
+    "Loop Scenes": {
+      "main": [
+        [{ "node": "Re-read Scenes", "type": "main", "index": 0 }],
+        [{ "node": "ElevenLabs TTS", "type": "main", "index": 0 }]
+      ]
+    },
+    "ElevenLabs TTS": {
+      "main": [
+        [{ "node": "Extract Audio + Duration", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Audio + Duration": {
+      "main": [[{ "node": "Upload to Storage", "type": "main", "index": 0 }]]
+    },
+    "Upload to Storage": {
+      "main": [[{ "node": "Update Scene", "type": "main", "index": 0 }]]
+    },
+    "Update Scene": {
+      "main": [[{ "node": "Loop Scenes", "type": "main", "index": 0 }]]
+    },
+    "Re-read Scenes": {
+      "main": [[{ "node": "Total Duration", "type": "main", "index": 0 }]]
+    },
+    "Total Duration": {
+      "main": [
+        [{ "node": "Mark voice_ready", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {}
+}

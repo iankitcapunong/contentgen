@@ -1,0 +1,536 @@
+{
+  "name": "CG 07 — Deliver (Drive + Sheet)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cg07-trigger",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-900, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "g1",
+              "name": "supabase_url",
+              "value": "https://YOUR_PROJECT.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "g2",
+              "name": "drive_parent_folder_id",
+              "value": "YOUR_DRIVE_FOLDER_ID",
+              "type": "string"
+            },
+            {
+              "id": "g3",
+              "name": "sheet_id",
+              "value": "YOUR_GOOGLE_SHEET_ID",
+              "type": "string"
+            },
+            {
+              "id": "g4",
+              "name": "sheet_name",
+              "value": "Videos",
+              "type": "string"
+            },
+            {
+              "id": "g5",
+              "name": "cleanup_after_upload",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "g6",
+              "name": "share_publicly",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg07-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.supabase_url }}/rest/v1/rpc/claim_job",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"p_target\": \"render_ready\", \"p_next\": \"uploading\" }",
+        "options": {}
+      },
+      "id": "cg07-claim",
+      "name": "Claim Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-460, 300],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.final_video_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg07-has-job",
+      "name": "Got a video?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.final_video_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 600000
+        }
+      },
+      "id": "cg07-download",
+      "name": "Download Final MP4",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-20, 220],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "notes": "The only place in the whole pipeline that moves real bytes through n8n (PLAN 7.5). On a memory-constrained instance set N8N_DEFAULT_BINARY_DATA_MODE=filesystem."
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $now.format('yyyy-MM-dd') }} — {{ ($('Claim Job').first().json.title || 'Untitled').replace(/[\\\\/:*?\"<>|]/g, '').slice(0, 80) }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.drive_parent_folder_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "cg07-folder",
+      "name": "Create Drive Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [200, 220],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GDRIVE_CRED",
+          "name": "Google Drive"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "name": "={{ ($('Claim Job').first().json.title || 'video').replace(/[\\\\/:*?\"<>|]/g, '').slice(0, 80) }}.mp4",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "cg07-upload",
+      "name": "Upload to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [420, 220],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GDRIVE_CRED",
+          "name": "Google Drive"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Config').first().json.share_publicly }}",
+              "rightValue": "={{ true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg07-should-share",
+      "name": "Share it?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 220]
+    },
+    {
+      "parameters": {
+        "operation": "share",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "permissionsUi": {
+          "permissionsValues": {
+            "role": "reader",
+            "type": "anyone"
+          }
+        },
+        "options": {}
+      },
+      "id": "cg07-share",
+      "name": "Make Link-Shareable",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [860, 140],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GDRIVE_CRED",
+          "name": "Google Drive"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Anyone-with-the-link reader. Drop this node if these videos should stay private to the Drive account."
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "job_id",
+              "value": "=eq.{{ $('Claim Job').first().json.id }}"
+            },
+            {
+              "name": "order",
+              "value": "scene_number.asc"
+            },
+            {
+              "name": "select",
+              "value": "scene_number,image_url,audio_duration_sec"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg07-scenes",
+      "name": "Get Scenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 220],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Keys here must match the Google Sheet header row EXACTLY — the Sheets node\n// is set to auto-map, so a renamed header silently drops that column.\nconst job    = $('Claim Job').first().json;\nconst file   = $('Upload to Drive').first().json;\nconst folder = $('Create Drive Folder').first().json;\nconst scenes = $input.all().map(i => i.json);\n\nconst duration = scenes.reduce((s, r) => s + Number(r.audio_duration_sec || 0), 0);\nconst link = file.webViewLink || ('https://drive.google.com/file/d/' + file.id + '/view');\n\nfunction mmss(sec) {\n  const m = Math.floor(sec / 60);\n  const s = Math.round(sec % 60);\n  return m + ':' + String(s).padStart(2, '0');\n}\n\nreturn [{\n  json: {\n    'Date':        new Date().toISOString().slice(0, 10),\n    'Job ID':      job.id,\n    'Title':       job.title || '',\n    'Hook':        job.hook || '',\n    'Duration':    mmss(duration),\n    'Drive Link':  link,\n    'Folder Link': folder.id ? 'https://drive.google.com/drive/folders/' + folder.id : '',\n    'Thumbnail':   scenes[0]?.image_url || '',\n    'Scene Count': scenes.length,\n    'Cost USD':    Number(job.cost_usd || 0),\n    'Status':      'Ready',\n    'Posted?':     'No',\n    // carried for the nodes after this one, not a sheet column\n    _job_id:    job.id,\n    _file_id:   file.id,\n    _link:      link\n  }\n}];"
+      },
+      "id": "cg07-row",
+      "name": "Build Sheet Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 220]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_name }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "cg07-sheet",
+      "name": "Append to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1520, 220],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GSHEETS_CRED",
+          "name": "Google Sheets"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $('Build Sheet Row').first().json._job_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'complete', drive_file_id: $('Build Sheet Row').first().json._file_id, drive_link: $('Build Sheet Row').first().json._link, claimed_at: null, last_error: null }) }}",
+        "options": {}
+      },
+      "id": "cg07-complete",
+      "name": "Mark complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1740, 220],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $('Config').first().json.cleanup_after_upload }}",
+              "rightValue": "={{ true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg07-should-clean",
+      "name": "Clean up storage?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1960, 220],
+      "notes": "Off by default. The mp4 is safely in Drive at this point, but keeping the intermediates lets you re-render without re-paying for clips. Turn on once storage becomes the bigger cost."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Supabase storage deletes by prefix list, per bucket.\nconst jobId  = $('Build Sheet Row').first().json._job_id;\nconst scenes = $('Get Scenes').all().map(i => i.json);\n\nreturn [{\n  json: {\n    job_id: jobId,\n    clips:  scenes.map(s => jobId + '/' + s.scene_number + '.mp4'),\n    images: scenes.map(s => jobId + '/' + s.scene_number + '.jpg'),\n    audio:  scenes.map(s => jobId + '/' + s.scene_number + '.mp3')\n  }\n}];"
+      },
+      "id": "cg07-cleanlist",
+      "name": "Build Cleanup List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2180, 140]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $('Config').first().json.supabase_url }}/storage/v1/object/clips",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prefixes: $json.clips }) }}",
+        "options": {}
+      },
+      "id": "cg07-del-clips",
+      "name": "Delete Clips",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, 140],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $('Claim Job').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": {{ JSON.stringify($('Claim Job').first().json.attempts >= 3 ? 'failed' : 'render_ready') }}, \"claimed_at\": null, \"last_error\": {{ JSON.stringify(String($json.error?.message || $json.error || 'delivery failed').slice(0,500)) }} }",
+        "options": {}
+      },
+      "id": "cg07-fail",
+      "name": "Retry or Fail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 560],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "Safe to retry: the render is already done and final_video_url is stored, so a retry only redoes the Drive upload. Duplicate Drive files are possible on repeated failures — check the folder if you see retries."
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Claim Job", "type": "main", "index": 0 }]]
+    },
+    "Claim Job": {
+      "main": [[{ "node": "Got a video?", "type": "main", "index": 0 }]]
+    },
+    "Got a video?": {
+      "main": [[{ "node": "Download Final MP4", "type": "main", "index": 0 }], []]
+    },
+    "Download Final MP4": {
+      "main": [
+        [{ "node": "Create Drive Folder", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Drive Folder": {
+      "main": [
+        [{ "node": "Upload to Drive", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Upload to Drive": {
+      "main": [
+        [{ "node": "Share it?", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Share it?": {
+      "main": [
+        [{ "node": "Make Link-Shareable", "type": "main", "index": 0 }],
+        [{ "node": "Get Scenes", "type": "main", "index": 0 }]
+      ]
+    },
+    "Make Link-Shareable": {
+      "main": [[{ "node": "Get Scenes", "type": "main", "index": 0 }]]
+    },
+    "Get Scenes": {
+      "main": [[{ "node": "Build Sheet Row", "type": "main", "index": 0 }]]
+    },
+    "Build Sheet Row": {
+      "main": [[{ "node": "Append to Sheet", "type": "main", "index": 0 }]]
+    },
+    "Append to Sheet": {
+      "main": [
+        [{ "node": "Mark complete", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark complete": {
+      "main": [[{ "node": "Clean up storage?", "type": "main", "index": 0 }]]
+    },
+    "Clean up storage?": {
+      "main": [[{ "node": "Build Cleanup List", "type": "main", "index": 0 }], []]
+    },
+    "Build Cleanup List": {
+      "main": [[{ "node": "Delete Clips", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 3600
+  },
+  "pinData": {}
+}

@@ -1,0 +1,114 @@
+{
+  "name": "CG 99 — Sweeper",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "cg99-trigger",
+      "name": "Every 10 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-400, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "h1",
+              "name": "supabase_url",
+              "value": "https://YOUR_PROJECT.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "h2",
+              "name": "stale_minutes",
+              "value": 30,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg99-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-180, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.supabase_url }}/rest/v1/rpc/reset_stale_jobs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"p_minutes\": {{ $json.stale_minutes }} }",
+        "options": {}
+      },
+      "id": "cg99-reset",
+      "name": "Reset Stale Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [40, 220],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "alwaysOutputData": true,
+      "notes": "A worker that dies mid-stage leaves a job stuck in a transient status forever. This puts it back one step so the next run picks it up (PLAN 7.4)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/rpc/park_exhausted_jobs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {}
+      },
+      "id": "cg99-park",
+      "name": "Park Exhausted Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 220],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "notes": "Anything that burned through 4 attempts stops looping and parks as failed, so a poisoned job cannot cycle forever spending money."
+    }
+  ],
+  "connections": {
+    "Every 10 minutes": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Reset Stale Jobs", "type": "main", "index": 0 }]]
+    },
+    "Reset Stale Jobs": {
+      "main": [[{ "node": "Park Exhausted Jobs", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

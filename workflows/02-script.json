@@ -1,0 +1,333 @@
+{
+  "name": "CG 02 — Script",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cg02-trigger",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-620, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "supabase_url",
+              "value": "https://YOUR_PROJECT.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "b2",
+              "name": "model_script",
+              "value": "anthropic/claude-sonnet-4.5",
+              "type": "string"
+            },
+            {
+              "id": "b3",
+              "name": "target_duration_sec",
+              "value": 60,
+              "type": "number"
+            },
+            {
+              "id": "b4",
+              "name": "script_prompt",
+              "value": "You write scripts for short narrated videos that are assembled automatically. Your JSON is consumed by machines — malformed output breaks the pipeline.\n\nHARD RULES:\n1. narration: 12-20 words. Exactly one sentence, one breath, 5-8 seconds spoken. This is non-negotiable — the video clip for each scene has a FIXED length and the narration must fit it.\n2. image_prompt: a complete standalone visual description. Describe subject, setting, lighting, composition. NEVER mention camera movement, zoom, pan, or anything temporal. Each prompt is rendered as a single still image with no knowledge of the other scenes, so repeat key subject details every time.\n3. motion_prompt: camera or subject motion ONLY, 3-8 words (e.g. \"slow push in, subject turns head\").\n4. on_screen_text: max 6 words, or empty string.\n5. scene_number: sequential integers starting at 1, no gaps.\n\nSTRUCTURE: scene 1 is the hook. The final scene resolves or calls to action. Every scene must advance the idea — no filler.\n\nReturn ONLY JSON:\n{\"title\":\"...\",\"scenes\":[{\"scene_number\":1,\"narration\":\"...\",\"image_prompt\":\"...\",\"motion_prompt\":\"...\",\"on_screen_text\":\"...\"}]}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg02-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-400, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.supabase_url }}/rest/v1/rpc/claim_job",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"p_target\": \"idea_ready\", \"p_next\": \"scripting\" }",
+        "options": {}
+      },
+      "id": "cg02-claim",
+      "name": "Claim Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-180, 300],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg02-has-job",
+      "name": "Got a job?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [40, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $('Config').first().json.model_script }}\",\n  \"temperature\": 0.8,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    { \"role\": \"system\", \"content\": {{ JSON.stringify($('Config').first().json.script_prompt) }} },\n    { \"role\": \"user\", \"content\": {{ JSON.stringify('Title: ' + $json.title + '\\nHook: ' + $json.hook + '\\nAudience: ' + ($json.audience || 'general') + '\\nTarget length: ' + $('Config').first().json.target_duration_sec + ' seconds, which means about ' + Math.round($('Config').first().json.target_duration_sec / 7) + ' scenes.') }} }\n  ]\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "cg02-write",
+      "name": "Write Script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OPENROUTER_CRED",
+          "name": "OpenRouter"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ---------------------------------------------------------------------------\n// THE VALIDATION GATE (PLAN 7.2 / W2 note).\n// Six downstream workflows read these rows. A malformed scene here fails\n// silently three stages later, after you have already paid for voice and\n// images. So: reject here, loudly, before anything is written.\n// ---------------------------------------------------------------------------\nconst job = $('Claim Job').first().json;\nconst raw = $input.first().json?.choices?.[0]?.message?.content;\n\nif (!raw) throw new Error('Model returned no content');\n\nlet parsed;\ntry {\n  parsed = JSON.parse(raw);\n} catch (e) {\n  throw new Error('Invalid JSON from model: ' + String(raw).slice(0, 300));\n}\n\nconst scenes = parsed.scenes;\nif (!Array.isArray(scenes) || scenes.length < 3) {\n  throw new Error('Expected at least 3 scenes, got ' + (scenes ? scenes.length : 'none'));\n}\nif (scenes.length > 20) {\n  throw new Error('Refusing ' + scenes.length + ' scenes — cost guard (max 20)');\n}\n\nconst problems = [];\nconst rows = scenes.map((s, i) => {\n  const n = i + 1;\n\n  if (!s.narration || !String(s.narration).trim()) problems.push('scene ' + n + ': empty narration');\n  if (!s.image_prompt || !String(s.image_prompt).trim()) problems.push('scene ' + n + ': empty image_prompt');\n\n  const words = String(s.narration || '').trim().split(/\\s+/).filter(Boolean).length;\n  // 12-20 is the instruction; allow 10-24 before rejecting outright.\n  if (words < 10 || words > 24) {\n    problems.push('scene ' + n + ': narration is ' + words + ' words (need 10-24)');\n  }\n\n  // Style consistency is enforced HERE, mechanically — not left to the model\n  // remembering to do it on every scene (PLAN 7.3).\n  const suffix = job.style_suffix ? ', ' + job.style_suffix : '';\n\n  return {\n    job_id:         job.id,\n    scene_number:   n,\n    narration:      String(s.narration || '').trim(),\n    image_prompt:   String(s.image_prompt || '').trim() + suffix,\n    motion_prompt:  String(s.motion_prompt || 'slow push in').trim(),\n    on_screen_text: String(s.on_screen_text || '').trim().slice(0, 60),\n    status:         'pending'\n  };\n});\n\nif (problems.length) {\n  throw new Error('Script rejected — ' + problems.join('; '));\n}\n\nreturn [{\n  json: {\n    job_id: job.id,\n    title:  parsed.title ? String(parsed.title).slice(0, 200) : job.title,\n    script: parsed,\n    scenes: rows,\n    scene_count: rows.length\n  }\n}];"
+      },
+      "id": "cg02-validate",
+      "name": "Validate Script",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 200],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $json.job_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ title: $json.title, script: $json.script }) }}",
+        "options": {}
+      },
+      "id": "cg02-save-script",
+      "name": "Save Script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 160],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes?job_id=eq.{{ $('Validate Script').first().json.job_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {}
+      },
+      "id": "cg02-clear-scenes",
+      "name": "Clear Old Scenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 160],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "Makes a replay idempotent: re-running the script stage replaces scenes instead of hitting the (job_id, scene_number) unique constraint."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Validate Script').first().json.scenes) }}",
+        "options": {}
+      },
+      "id": "cg02-insert-scenes",
+      "name": "Insert Scenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 160],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $('Validate Script').first().json.job_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": \"script_ready\", \"claimed_at\": null, \"last_error\": null }",
+        "options": {}
+      },
+      "id": "cg02-ready",
+      "name": "Mark script_ready",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 160],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $('Claim Job').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": {{ JSON.stringify($('Claim Job').first().json.attempts >= 3 ? 'failed' : 'idea_ready') }}, \"claimed_at\": null, \"last_error\": {{ JSON.stringify(String($json.error?.message || $json.error || 'script stage failed').slice(0,500)) }} }",
+        "options": {}
+      },
+      "id": "cg02-fail",
+      "name": "Retry or Fail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 420],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "Rejected scripts go back to idea_ready for up to 3 attempts, then park as failed. The LLM usually gets the word count right on a retry."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/job_events",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $('Claim Job').first().json.id, stage: 'script', level: 'error', message: String($('Retry or Fail').first().json?.last_error || 'script stage failed').slice(0,500) }) }}",
+        "options": {}
+      },
+      "id": "cg02-log",
+      "name": "Log Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 420],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Claim Job", "type": "main", "index": 0 }]]
+    },
+    "Claim Job": {
+      "main": [[{ "node": "Got a job?", "type": "main", "index": 0 }]]
+    },
+    "Got a job?": {
+      "main": [[{ "node": "Write Script", "type": "main", "index": 0 }], []]
+    },
+    "Write Script": {
+      "main": [
+        [{ "node": "Validate Script", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Validate Script": {
+      "main": [
+        [{ "node": "Save Script", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Script": {
+      "main": [[{ "node": "Clear Old Scenes", "type": "main", "index": 0 }]]
+    },
+    "Clear Old Scenes": {
+      "main": [[{ "node": "Insert Scenes", "type": "main", "index": 0 }]]
+    },
+    "Insert Scenes": {
+      "main": [[{ "node": "Mark script_ready", "type": "main", "index": 0 }]]
+    },
+    "Retry or Fail": {
+      "main": [[{ "node": "Log Failure", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {}
+}

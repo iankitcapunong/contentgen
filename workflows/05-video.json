@@ -1,0 +1,658 @@
+{
+  "name": "CG 05 — Video (optional)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "cg05-trigger",
+      "name": "Every 2 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-840, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1",
+              "name": "supabase_url",
+              "value": "https://YOUR_PROJECT.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "e2",
+              "name": "fal_video_endpoint",
+              "value": "https://queue.fal.run/fal-ai/kling-video/v1/standard/image-to-video",
+              "type": "string"
+            },
+            {
+              "id": "e3",
+              "name": "aspect_ratio",
+              "value": "9:16",
+              "type": "string"
+            },
+            {
+              "id": "e4",
+              "name": "poll_timeout_minutes",
+              "value": 10,
+              "type": "number"
+            },
+            {
+              "id": "e5",
+              "name": "max_scenes",
+              "value": 12,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg05-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-620, 300],
+      "notes": "THIS IS THE EXPENSIVE WORKFLOW. It only ever sees jobs with use_video_gen = true. Keep it deactivated until the stills path is proven end to end (PLAN phase 5)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.supabase_url }}/rest/v1/rpc/claim_job",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"p_target\": \"images_ready\", \"p_next\": \"animating\" }",
+        "options": {}
+      },
+      "id": "cg05-claim",
+      "name": "Claim Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-400, 300],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg05-has-job",
+      "name": "Got a job?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-180, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "job_id",
+              "value": "=eq.{{ $json.id }}"
+            },
+            {
+              "name": "order",
+              "value": "scene_number.asc"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $('Config').first().json.max_scenes }}"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg05-get-scenes",
+      "name": "Get Scenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [40, 220],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "max_scenes is a hard spend ceiling: at roughly $0.40 per clip-second, a runaway 40-scene script is a real bill."
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "cg05-loop",
+      "name": "Loop Scenes",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [260, 220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.clip_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg05-needs-clip",
+      "name": "Needs a clip?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [480, 340],
+      "notes": "The single most important node in this workflow. Without it, every retry re-buys every clip."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.fal_video_endpoint }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"prompt\": {{ JSON.stringify(($json.motion_prompt || 'slow push in') + '. ' + ($json.image_prompt || '')) }},\n  \"image_url\": {{ JSON.stringify($json.image_url) }},\n  \"duration\": \"{{ Number($json.audio_duration_sec || 5) <= 5 ? '5' : '10' }}\",\n  \"aspect_ratio\": \"{{ $('Config').first().json.aspect_ratio }}\"\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "cg05-submit",
+      "name": "Submit Clip Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 340],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "FAL_CRED",
+          "name": "fal.ai"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "SOLVES THE FIXED-LENGTH PROBLEM (PLAN 7.2). The model only emits 5s or 10s. We request the shortest length that still COVERS the narration, then workflow 06 trims the clip down to the exact audio duration. A clip is allowed to be longer than its narration; it must never be shorter, or you get silence over a frozen frame."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes?id=eq.{{ $('Loop Scenes').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ provider_request_id: $json.request_id, status: 'submitted' }) }}",
+        "options": {}
+      },
+      "id": "cg05-save-req",
+      "name": "Save Request ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 340],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "Written BEFORE the first poll, deliberately. If n8n dies mid-poll, the request id survives and the clip can be collected later instead of paid for twice (PLAN 7.1)."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "p1",
+              "name": "poll_deadline",
+              "value": "={{ $now.plus({ minutes: $('Config').first().json.poll_timeout_minutes }).toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg05-clock",
+      "name": "Start Poll Clock",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1030, 340],
+      "notes": "Stamps a per-scene deadline. This node re-runs for every scene, so .first() always returns THIS scene's deadline. Do not replace with a $runIndex counter: $runIndex accumulates across the whole execution, so with a poll loop nested inside a scene loop, a slow scene 1 would starve scene 2 of its retries."
+    },
+    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "cg05-wait",
+      "name": "Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1140, 340],
+      "webhookId": "cg05-wait-webhook"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Submit Clip Job').first().json.status_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "cg05-status",
+      "name": "Check Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 340],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "FAL_CRED",
+          "name": "fal.ai"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "notes": "Uses the status_url fal handed back rather than a hand-built URL, so swapping video models needs no change here."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "COMPLETED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg05-done",
+      "name": "Clip ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1580, 340]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $now.toMillis() }}",
+              "rightValue": "={{ DateTime.fromISO($('Start Poll Clock').first().json.poll_deadline).toMillis() }}",
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg05-poll-again",
+      "name": "Poll again?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1580, 560],
+      "notes": "Per-scene wall-clock bound: keep polling until this scene's own deadline passes, then give up on it. Correct regardless of how long earlier scenes took."
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Submit Clip Job').first().json.response_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "cg05-result",
+      "name": "Fetch Result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 240],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "FAL_CRED",
+          "name": "fal.ai"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.video?.url || $json.video_url || $json.output?.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "id": "cg05-download",
+      "name": "Download Clip",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2020, 240],
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.supabase_url }}/storage/v1/object/clips/{{ $('Loop Scenes').first().json.job_id }}/{{ $('Loop Scenes').first().json.scene_number }}.mp4",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-upsert",
+              "value": "true"
+            },
+            {
+              "name": "Content-Type",
+              "value": "video/mp4"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "cg05-upload",
+      "name": "Upload to Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2240, 240],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes?id=eq.{{ $('Loop Scenes').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ clip_url: $('Config').first().json.supabase_url + '/storage/v1/object/public/clips/' + $('Loop Scenes').first().json.job_id + '/' + $('Loop Scenes').first().json.scene_number + '.mp4', status: 'animated' }) }}",
+        "options": {}
+      },
+      "id": "cg05-update-scene",
+      "name": "Update Scene",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2460, 240],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "job_id",
+              "value": "=eq.{{ $('Claim Job').first().json.id }}"
+            },
+            {
+              "name": "select",
+              "value": "scene_number,clip_url"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg05-reread",
+      "name": "Re-read Scenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 120],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json);\nconst missing = rows.filter(r => !r.clip_url);\n\nif (missing.length) {\n  throw new Error(missing.length + ' of ' + rows.length + ' scenes have no clip: scenes ' + missing.map(m => m.scene_number).join(', '));\n}\n\nreturn [{ json: { job_id: $('Claim Job').first().json.id, scene_count: rows.length } }];"
+      },
+      "id": "cg05-verify",
+      "name": "Verify All Animated",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 120],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $json.job_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": \"clips_ready\", \"claimed_at\": null, \"last_error\": null }",
+        "options": {}
+      },
+      "id": "cg05-ready",
+      "name": "Mark clips_ready",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 120],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $('Claim Job').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": {{ JSON.stringify($('Claim Job').first().json.attempts >= 2 ? 'paused_for_review' : 'images_ready') }}, \"claimed_at\": null, \"last_error\": {{ JSON.stringify(String($json.error?.message || $json.error || 'video stage failed').slice(0,500)) }} }",
+        "options": {}
+      },
+      "id": "cg05-fail",
+      "name": "Retry or Park",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 620],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "Only 2 attempts here, not 3, and it parks for review rather than failing — because each retry costs real money. Clips already produced are preserved by the 'Needs a clip?' guard, so a retry only pays for what is missing."
+    }
+  ],
+  "connections": {
+    "Every 2 minutes": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Claim Job", "type": "main", "index": 0 }]]
+    },
+    "Claim Job": {
+      "main": [[{ "node": "Got a job?", "type": "main", "index": 0 }]]
+    },
+    "Got a job?": {
+      "main": [[{ "node": "Get Scenes", "type": "main", "index": 0 }], []]
+    },
+    "Get Scenes": {
+      "main": [[{ "node": "Loop Scenes", "type": "main", "index": 0 }]]
+    },
+    "Loop Scenes": {
+      "main": [
+        [{ "node": "Re-read Scenes", "type": "main", "index": 0 }],
+        [{ "node": "Needs a clip?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Needs a clip?": {
+      "main": [
+        [{ "node": "Submit Clip Job", "type": "main", "index": 0 }],
+        [{ "node": "Loop Scenes", "type": "main", "index": 0 }]
+      ]
+    },
+    "Submit Clip Job": {
+      "main": [
+        [{ "node": "Save Request ID", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Park", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Request ID": {
+      "main": [[{ "node": "Start Poll Clock", "type": "main", "index": 0 }]]
+    },
+    "Start Poll Clock": {
+      "main": [[{ "node": "Wait 30s", "type": "main", "index": 0 }]]
+    },
+    "Wait 30s": {
+      "main": [[{ "node": "Check Status", "type": "main", "index": 0 }]]
+    },
+    "Check Status": {
+      "main": [[{ "node": "Clip ready?", "type": "main", "index": 0 }]]
+    },
+    "Clip ready?": {
+      "main": [
+        [{ "node": "Fetch Result", "type": "main", "index": 0 }],
+        [{ "node": "Poll again?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Poll again?": {
+      "main": [
+        [{ "node": "Wait 30s", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Park", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Result": {
+      "main": [[{ "node": "Download Clip", "type": "main", "index": 0 }]]
+    },
+    "Download Clip": {
+      "main": [[{ "node": "Upload to Storage", "type": "main", "index": 0 }]]
+    },
+    "Upload to Storage": {
+      "main": [[{ "node": "Update Scene", "type": "main", "index": 0 }]]
+    },
+    "Update Scene": {
+      "main": [[{ "node": "Loop Scenes", "type": "main", "index": 0 }]]
+    },
+    "Re-read Scenes": {
+      "main": [[{ "node": "Verify All Animated", "type": "main", "index": 0 }]]
+    },
+    "Verify All Animated": {
+      "main": [
+        [{ "node": "Mark clips_ready", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Park", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 3600
+  },
+  "pinData": {}
+}

@@ -1,0 +1,465 @@
+{
+  "name": "CG 04 — Images",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cg04-trigger",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-840, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1",
+              "name": "supabase_url",
+              "value": "https://YOUR_PROJECT.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "d2",
+              "name": "fal_image_endpoint",
+              "value": "https://fal.run/fal-ai/flux/dev",
+              "type": "string"
+            },
+            {
+              "id": "d3",
+              "name": "image_width",
+              "value": 832,
+              "type": "number"
+            },
+            {
+              "id": "d4",
+              "name": "image_height",
+              "value": 1472,
+              "type": "number"
+            },
+            {
+              "id": "d5",
+              "name": "num_inference_steps",
+              "value": 28,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg04-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-620, 300],
+      "notes": "832x1472 is a native-friendly 9:16 generation size. Do NOT generate at 1080x1920 — it is outside the model's trained resolution range and gets slow and artifact-prone. Shotstack scales up to 1080x1920 at render time."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.supabase_url }}/rest/v1/rpc/claim_job",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"p_target\": \"voice_ready\", \"p_next\": \"imaging\" }",
+        "options": {}
+      },
+      "id": "cg04-claim",
+      "name": "Claim Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-400, 300],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg04-has-job",
+      "name": "Got a job?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-180, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "job_id",
+              "value": "=eq.{{ $json.id }}"
+            },
+            {
+              "name": "order",
+              "value": "scene_number.asc"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg04-get-scenes",
+      "name": "Get Scenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [40, 220],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "cg04-loop",
+      "name": "Loop Scenes",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [260, 220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.image_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg04-needs-image",
+      "name": "Needs an image?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [480, 320],
+      "notes": "COST GUARD (PLAN 7.1). A scene that already has an image is skipped, so a retry after a mid-loop failure never re-buys work you already paid for."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.fal_image_endpoint }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"prompt\": {{ JSON.stringify($json.image_prompt) }},\n  \"image_size\": {\n    \"width\": {{ $('Config').first().json.image_width }},\n    \"height\": {{ $('Config').first().json.image_height }}\n  },\n  \"num_images\": 1,\n  \"num_inference_steps\": {{ $('Config').first().json.num_inference_steps }},\n  \"seed\": {{ Number($('Claim Job').first().json.seed || 0) + Number($json.scene_number) }},\n  \"enable_safety_checker\": true\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "cg04-generate",
+      "name": "Generate Image (fal)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 320],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "FAL_CRED",
+          "name": "fal.ai"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "notes": "Seed = job seed + scene number: different image each scene, but reproducible. Visual consistency comes from the style_suffix that workflow 02 welded onto every prompt."
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.images[0].url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "cg04-download",
+      "name": "Download Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 320],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "notes": "fal-hosted URLs expire. Always re-host to Storage before anything downstream needs them."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.supabase_url }}/storage/v1/object/images/{{ $('Loop Scenes').first().json.job_id }}/{{ $('Loop Scenes').first().json.scene_number }}.jpg",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-upsert",
+              "value": "true"
+            },
+            {
+              "name": "Content-Type",
+              "value": "image/jpeg"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "cg04-upload",
+      "name": "Upload to Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 320],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes?id=eq.{{ $('Loop Scenes').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ image_url: $('Config').first().json.supabase_url + '/storage/v1/object/public/images/' + $('Loop Scenes').first().json.job_id + '/' + $('Loop Scenes').first().json.scene_number + '.jpg', status: 'imaged' }) }}",
+        "options": {}
+      },
+      "id": "cg04-update-scene",
+      "name": "Update Scene",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 320],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "job_id",
+              "value": "=eq.{{ $('Claim Job').first().json.id }}"
+            },
+            {
+              "name": "select",
+              "value": "scene_number,image_url"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg04-reread",
+      "name": "Re-read Scenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 120],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// A missing image means a black frame in the finished video. Refuse to advance.\nconst rows = $input.all().map(i => i.json);\nconst missing = rows.filter(r => !r.image_url);\n\nif (missing.length) {\n  throw new Error(missing.length + ' of ' + rows.length + ' scenes have no image: scenes ' + missing.map(m => m.scene_number).join(', '));\n}\n\nconst job = $('Claim Job').first().json;\nreturn [{\n  json: {\n    job_id: job.id,\n    scene_count: rows.length,\n    // Skip the video stage entirely unless this job opted in (PLAN 7.1).\n    next_status: job.use_video_gen === true ? 'images_ready' : 'clips_ready'\n  }\n}];"
+      },
+      "id": "cg04-verify",
+      "name": "Verify All Imaged",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 120],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $json.job_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: $json.next_status, claimed_at: null, last_error: null }) }}",
+        "options": {}
+      },
+      "id": "cg04-ready",
+      "name": "Advance Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 120],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "use_video_gen=false jumps straight to clips_ready, skipping workflow 05. That is the ~$0.40/video path."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $('Claim Job').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": {{ JSON.stringify($('Claim Job').first().json.attempts >= 3 ? 'failed' : 'voice_ready') }}, \"claimed_at\": null, \"last_error\": {{ JSON.stringify(String($json.error?.message || $json.error || 'image stage failed').slice(0,500)) }} }",
+        "options": {}
+      },
+      "id": "cg04-fail",
+      "name": "Retry or Fail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 520],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "Safe to retry: the 'Needs an image?' guard means only the missing scenes get regenerated. A content-policy refusal on one prompt will loop here 3 times then park — check last_error and edit that scene's prompt by hand (PLAN 7.6)."
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Claim Job", "type": "main", "index": 0 }]]
+    },
+    "Claim Job": {
+      "main": [[{ "node": "Got a job?", "type": "main", "index": 0 }]]
+    },
+    "Got a job?": {
+      "main": [[{ "node": "Get Scenes", "type": "main", "index": 0 }], []]
+    },
+    "Get Scenes": {
+      "main": [[{ "node": "Loop Scenes", "type": "main", "index": 0 }]]
+    },
+    "Loop Scenes": {
+      "main": [
+        [{ "node": "Re-read Scenes", "type": "main", "index": 0 }],
+        [{ "node": "Needs an image?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Needs an image?": {
+      "main": [
+        [{ "node": "Generate Image (fal)", "type": "main", "index": 0 }],
+        [{ "node": "Loop Scenes", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate Image (fal)": {
+      "main": [
+        [{ "node": "Download Image", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Download Image": {
+      "main": [[{ "node": "Upload to Storage", "type": "main", "index": 0 }]]
+    },
+    "Upload to Storage": {
+      "main": [[{ "node": "Update Scene", "type": "main", "index": 0 }]]
+    },
+    "Update Scene": {
+      "main": [[{ "node": "Loop Scenes", "type": "main", "index": 0 }]]
+    },
+    "Re-read Scenes": {
+      "main": [[{ "node": "Verify All Imaged", "type": "main", "index": 0 }]]
+    },
+    "Verify All Imaged": {
+      "main": [
+        [{ "node": "Advance Job", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {}
+}

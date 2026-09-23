@@ -1,0 +1,453 @@
+{
+  "name": "CG 06 — Render",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cg06-trigger",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-840, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "supabase_url",
+              "value": "https://YOUR_PROJECT.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "shotstack_env",
+              "value": "stage",
+              "type": "string"
+            },
+            {
+              "id": "f3",
+              "name": "max_polls",
+              "value": 40,
+              "type": "number"
+            },
+            {
+              "id": "f4",
+              "name": "background",
+              "value": "#000000",
+              "type": "string"
+            },
+            {
+              "id": "f5",
+              "name": "show_captions",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg06-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-620, 300],
+      "notes": "shotstack_env: 'stage' is the sandbox (free, for building) and 'v1' is production. Check Shotstack's current sandbox terms re: watermarking before you publish anything rendered on stage."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.supabase_url }}/rest/v1/rpc/claim_job",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"p_target\": \"clips_ready\", \"p_next\": \"editing\" }",
+        "options": {}
+      },
+      "id": "cg06-claim",
+      "name": "Claim Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-400, 300],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg06-has-job",
+      "name": "Got a job?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-180, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "job_id",
+              "value": "=eq.{{ $json.id }}"
+            },
+            {
+              "name": "order",
+              "value": "scene_number.asc"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg06-get-scenes",
+      "name": "Get Scenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [40, 300],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ---------------------------------------------------------------------------\n// BUILD THE TIMELINE.\n// Every clip length comes from scenes.audio_duration_sec — the real measured\n// duration from the ElevenLabs alignment data, never an estimate. Visual and\n// audio share one cursor, so they cannot drift apart (PLAN 7.2).\n// ---------------------------------------------------------------------------\nconst cfg    = $('Config').first().json;\nconst job    = $('Claim Job').first().json;\nconst scenes = $input.all().map(i => i.json).sort((a, b) => a.scene_number - b.scene_number);\n\nif (!scenes.length) throw new Error('No scenes to render');\n\nconst useVideo = job.use_video_gen === true;\n\n// Ken Burns variety for the stills path. Alternating direction stops a series\n// of still images from reading as a slideshow.\nconst effects = ['zoomIn', 'slideLeft', 'zoomOut', 'slideRight', 'zoomIn', 'slideUp'];\n\nconst visuals = [];\nconst audios  = [];\nconst texts   = [];\n\nlet cursor = 0;\n\nscenes.forEach((s, idx) => {\n  const length = Number(s.audio_duration_sec);\n\n  if (!length || !isFinite(length) || length <= 0) {\n    throw new Error('Scene ' + s.scene_number + ' has no usable audio duration');\n  }\n  if (!s.audio_url) throw new Error('Scene ' + s.scene_number + ' has no audio');\n\n  const src = useVideo ? s.clip_url : s.image_url;\n  if (!src) throw new Error('Scene ' + s.scene_number + ' has no ' + (useVideo ? 'clip' : 'image'));\n\n  // Fade only where there is room, so a short scene is not all transition.\n  const transition = length > 1.2 ? { in: 'fade', out: 'fade' } : undefined;\n\n  if (useVideo) {\n    visuals.push({\n      asset: {\n        type: 'video',\n        src,\n        trim: 0,\n        volume: 0          // the generated clip's own audio is never wanted\n      },\n      start: cursor,\n      // Clip source is >= narration by construction (workflow 05), so cutting\n      // to the audio length is always safe and always in sync.\n      length,\n      fit: 'cover',\n      ...(transition ? { transition } : {})\n    });\n  } else {\n    visuals.push({\n      asset: { type: 'image', src },\n      start: cursor,\n      length,\n      fit: 'cover',\n      scale: 1,\n      effect: effects[idx % effects.length],\n      ...(transition ? { transition } : {})\n    });\n  }\n\n  audios.push({\n    asset: { type: 'audio', src: s.audio_url, volume: 1 },\n    start: cursor,\n    length\n  });\n\n  if (cfg.show_captions && s.on_screen_text) {\n    texts.push({\n      asset: {\n        type: 'title',\n        text: s.on_screen_text,\n        style: 'subtitle',\n        size: 'medium',\n        position: 'bottom'\n      },\n      start: cursor + 0.15,\n      length: Math.max(0.5, length - 0.3)\n    });\n  }\n\n  cursor += length;\n});\n\n// Track order matters: index 0 renders on TOP.\nconst tracks = [];\nif (texts.length) tracks.push({ clips: texts });\ntracks.push({ clips: visuals });\ntracks.push({ clips: audios });\n\nconst payload = {\n  timeline: {\n    background: cfg.background,\n    tracks\n  },\n  output: {\n    format: 'mp4',\n    fps: 30,\n    size: {\n      width:  Number(job.width  || 1080),\n      height: Number(job.height || 1920)\n    }\n  }\n};\n\nreturn [{\n  json: {\n    job_id: job.id,\n    total_duration: Math.round(cursor * 1000) / 1000,\n    scene_count: scenes.length,\n    payload\n  }\n}];"
+      },
+      "id": "cg06-build",
+      "name": "Build Timeline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 300],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.shotstack.io/edit/{{ $('Config').first().json.shotstack_env }}/render",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "cg06-submit",
+      "name": "Submit Render",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 240],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SHOTSTACK_CRED",
+          "name": "Shotstack"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $('Build Timeline').first().json.job_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ render_id: $json.response.id }) }}",
+        "options": {}
+      },
+      "id": "cg06-save-render-id",
+      "name": "Save Render ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 240],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "Same reason as the clip request id: persisted before polling so a dead execution can be recovered instead of re-rendered."
+    },
+    {
+      "parameters": {
+        "amount": 20,
+        "unit": "seconds"
+      },
+      "id": "cg06-wait",
+      "name": "Wait 20s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [920, 240],
+      "webhookId": "cg06-wait-webhook"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.shotstack.io/edit/{{ $('Config').first().json.shotstack_env }}/render/{{ $('Submit Render').first().json.response.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "cg06-status",
+      "name": "Check Render",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 240],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "SHOTSTACK_CRED",
+          "name": "Shotstack"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.response.status }}",
+              "rightValue": "done",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg06-done",
+      "name": "Render done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1360, 240]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.response.status }}",
+              "rightValue": "failed",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ $runIndex }}",
+              "rightValue": "={{ $('Config').first().json.max_polls }}",
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg06-poll-again",
+      "name": "Keep waiting?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1360, 460],
+      "notes": "Stops immediately on an explicit 'failed' instead of burning 40 polls on a render that will never finish."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $('Build Timeline').first().json.job_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'render_ready', final_video_url: $json.response.url, claimed_at: null, last_error: null }) }}",
+        "options": {}
+      },
+      "id": "cg06-ready",
+      "name": "Mark render_ready",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1580, 160],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $('Claim Job').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": {{ JSON.stringify($('Claim Job').first().json.attempts >= 3 ? 'failed' : 'clips_ready') }}, \"claimed_at\": null, \"last_error\": {{ JSON.stringify(String($json.error?.message || $json.response?.error || $json.error || 'render failed').slice(0,500)) }} }",
+        "options": {}
+      },
+      "id": "cg06-fail",
+      "name": "Retry or Fail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 560],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/job_events",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ job_id: $('Claim Job').first().json.id, stage: 'render', level: 'error', message: 'render stage failed' }) }}",
+        "options": {}
+      },
+      "id": "cg06-log",
+      "name": "Log Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1140, 560],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Claim Job", "type": "main", "index": 0 }]]
+    },
+    "Claim Job": {
+      "main": [[{ "node": "Got a job?", "type": "main", "index": 0 }]]
+    },
+    "Got a job?": {
+      "main": [[{ "node": "Get Scenes", "type": "main", "index": 0 }], []]
+    },
+    "Get Scenes": {
+      "main": [[{ "node": "Build Timeline", "type": "main", "index": 0 }]]
+    },
+    "Build Timeline": {
+      "main": [
+        [{ "node": "Submit Render", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Submit Render": {
+      "main": [
+        [{ "node": "Save Render ID", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Render ID": {
+      "main": [[{ "node": "Wait 20s", "type": "main", "index": 0 }]]
+    },
+    "Wait 20s": {
+      "main": [[{ "node": "Check Render", "type": "main", "index": 0 }]]
+    },
+    "Check Render": {
+      "main": [[{ "node": "Render done?", "type": "main", "index": 0 }]]
+    },
+    "Render done?": {
+      "main": [
+        [{ "node": "Mark render_ready", "type": "main", "index": 0 }],
+        [{ "node": "Keep waiting?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Keep waiting?": {
+      "main": [
+        [{ "node": "Wait 20s", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Retry or Fail": {
+      "main": [[{ "node": "Log Failure", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 3600
+  },
+  "pinData": {}
+}

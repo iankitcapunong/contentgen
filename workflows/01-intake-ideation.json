@@ -1,0 +1,282 @@
+{
+  "name": "CG 01 — Intake & Ideation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cg01-trigger",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-620, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "supabase_url",
+              "value": "https://YOUR_PROJECT.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "model_ideation",
+              "value": "openai/gpt-4o-mini",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "angles_per_topic",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "a4",
+              "name": "use_video_gen",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "a5",
+              "name": "width",
+              "value": 1080,
+              "type": "number"
+            },
+            {
+              "id": "a6",
+              "name": "height",
+              "value": 1920,
+              "type": "number"
+            },
+            {
+              "id": "a7",
+              "name": "ideation_prompt",
+              "value": "You are a short-form video strategist. Given a raw topic, produce distinct angles for a 60-second narrated video.\n\nEach angle must have:\n- title: a specific, concrete video title (max 60 chars)\n- hook: the first spoken line, designed to stop a scroll (max 15 words)\n- audience: who exactly this is for\n- style_suffix: a short visual style descriptor applied to EVERY image in the video, e.g. \"cinematic photography, muted teal and amber palette, shallow depth of field, 35mm\". This is what keeps scenes visually consistent — be specific and repeatable.\n\nReturn ONLY JSON: {\"angles\":[{\"title\":\"...\",\"hook\":\"...\",\"audience\":\"...\",\"style_suffix\":\"...\"}]}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg01-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-400, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.supabase_url }}/rest/v1/rpc/claim_topic",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {}
+      },
+      "id": "cg01-claim",
+      "name": "Claim Topic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-180, 300],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "Returns [] when no topic is waiting -> 0 items -> workflow ends here."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg01-has-topic",
+      "name": "Got a topic?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [40, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $('Config').first().json.model_ideation }}\",\n  \"temperature\": 0.9,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    { \"role\": \"system\", \"content\": {{ JSON.stringify($('Config').first().json.ideation_prompt) }} },\n    { \"role\": \"user\", \"content\": {{ JSON.stringify('Topic: ' + $json.raw_topic + '\\n\\nProduce exactly ' + $('Config').first().json.angles_per_topic + ' angle(s).') }} }\n  ]\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "cg01-ideate",
+      "name": "Ideate (OpenRouter)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OPENROUTER_CRED",
+          "name": "OpenRouter"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the LLM response into job rows. Fail loudly rather than inserting junk.\nconst cfg   = $('Config').first().json;\nconst topic = $('Claim Topic').first().json;\nconst raw   = $input.first().json?.choices?.[0]?.message?.content;\n\nif (!raw) {\n  throw new Error('No content returned by the model');\n}\n\nlet parsed;\ntry {\n  parsed = JSON.parse(raw);\n} catch (e) {\n  throw new Error('Model did not return valid JSON: ' + raw.slice(0, 300));\n}\n\nconst angles = parsed.angles || [];\nif (!Array.isArray(angles) || angles.length === 0) {\n  throw new Error('No angles in model output');\n}\n\nreturn angles\n  .filter(a => a && a.title && a.hook)\n  .map(a => ({\n    json: {\n      topic_id:      topic.id,\n      title:         String(a.title).slice(0, 200),\n      hook:          String(a.hook),\n      audience:      a.audience ? String(a.audience) : null,\n      style_suffix:  a.style_suffix ? String(a.style_suffix) : 'cinematic photography, consistent color grade',\n      // One seed per job keeps every scene in the same visual world (PLAN 7.3)\n      seed:          Math.floor(Math.random() * 2147483647),\n      use_video_gen: cfg.use_video_gen === true,\n      width:         cfg.width,\n      height:        cfg.height,\n      aspect:        cfg.width >= cfg.height ? '16:9' : '9:16',\n      status:        'idea_ready'\n    }\n  }));"
+      },
+      "id": "cg01-parse",
+      "name": "Parse Angles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($input.all().map(i => i.json)) }}",
+        "options": {}
+      },
+      "id": "cg01-insert-jobs",
+      "name": "Insert Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 200],
+      "executeOnce": true,
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/topics?id=eq.{{ $('Claim Topic').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": \"done\" }",
+        "options": {}
+      },
+      "id": "cg01-topic-done",
+      "name": "Mark Topic Done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 200],
+      "executeOnce": true,
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/topics?id=eq.{{ $('Claim Topic').first().json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": \"new\", \"last_error\": {{ JSON.stringify(($json.error?.message || 'ideation failed').slice(0,500)) }} }",
+        "options": {}
+      },
+      "id": "cg01-topic-fail",
+      "name": "Release Topic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 420],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "SUPABASE_CRED",
+          "name": "Supabase service_role"
+        }
+      },
+      "notes": "Ideation is cheap, so a failure returns the topic to the queue rather than killing it. claim_topic increments attempts each time."
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Claim Topic", "type": "main", "index": 0 }]]
+    },
+    "Claim Topic": {
+      "main": [[{ "node": "Got a topic?", "type": "main", "index": 0 }]]
+    },
+    "Got a topic?": {
+      "main": [[{ "node": "Ideate (OpenRouter)", "type": "main", "index": 0 }], []]
+    },
+    "Ideate (OpenRouter)": {
+      "main": [
+        [{ "node": "Parse Angles", "type": "main", "index": 0 }],
+        [{ "node": "Release Topic", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Angles": {
+      "main": [[{ "node": "Insert Jobs", "type": "main", "index": 0 }]]
+    },
+    "Insert Jobs": {
+      "main": [[{ "node": "Mark Topic Done", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {}
+}
