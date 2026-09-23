@@ -1,0 +1,823 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Content Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f6f3;
+    --surface: #ffffff;
+    --surface-2: #f0efeb;
+    --border: #e2e0da;
+    --text: #1b1b19;
+    --muted: #6b6a64;
+    --accent: #3b5bdb;
+    --accent-soft: #e7ecfd;
+    --ok: #2b8a3e;
+    --ok-soft: #e3f4e6;
+    --warn: #b76e00;
+    --warn-soft: #fdf1dc;
+    --bad: #c92a2a;
+    --bad-soft: #fde8e8;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121211; --surface: #1b1b1a; --surface-2: #242422; --border: #31312e;
+      --text: #ecebe6; --muted: #9a9890; --accent: #7c95f5; --accent-soft: #232a45;
+      --ok: #5fc27a; --ok-soft: #1c2d20; --warn: #f0a93b; --warn-soft: #33281a;
+      --bad: #ff7b7b; --bad-soft: #3a1f1f; --shadow: 0 1px 2px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121211; --surface: #1b1b1a; --surface-2: #242422; --border: #31312e;
+    --text: #ecebe6; --muted: #9a9890; --accent: #7c95f5; --accent-soft: #232a45;
+    --ok: #5fc27a; --ok-soft: #1c2d20; --warn: #f0a93b; --warn-soft: #33281a;
+    --bad: #ff7b7b; --bad-soft: #3a1f1f; --shadow: 0 1px 2px rgba(0,0,0,.3);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  a { color: var(--accent); }
+  .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; }
+  .muted { color: var(--muted); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
+
+  /* ---------- header ---------- */
+  header.top {
+    position: sticky; top: 0; z-index: 5;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+  }
+  header.top .wrap { display: flex; align-items: center; gap: 12px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; }
+  .brand .logo {
+    width: 28px; height: 28px; border-radius: 8px; background: var(--accent);
+    display: grid; place-items: center; color: #fff;
+  }
+  .spacer { flex: 1; }
+  .live { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+  .dot.err { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface); border-radius: 8px;
+    padding: 7px 12px; font-weight: 500; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.ghost { background: transparent; border-color: transparent; }
+  .btn.ghost:hover { background: var(--surface-2); }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
+  .btn svg { width: 16px; height: 16px; }
+
+  main { padding: 24px 0 64px; }
+
+  /* ---------- banner ---------- */
+  .banner {
+    display: none; gap: 10px; align-items: flex-start;
+    border: 1px solid var(--bad); background: var(--bad-soft); color: var(--text);
+    border-radius: var(--radius); padding: 12px 14px; margin-bottom: 20px;
+  }
+  .banner.show { display: flex; }
+  .banner strong { color: var(--bad); }
+
+  /* ---------- stats ---------- */
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 20px; }
+  .stat {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 16px; box-shadow: var(--shadow);
+  }
+  .stat .label { color: var(--muted); font-size: 12px; font-weight: 500; }
+  .stat .value { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin-top: 2px; }
+  .stat.bad .value { color: var(--bad); }
+  .stat.ok .value { color: var(--ok); }
+
+  /* ---------- layout ---------- */
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  .card-h { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .card-h h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .card-b { padding: 16px; }
+
+  /* ---------- new topic ---------- */
+  textarea {
+    width: 100%; min-height: 84px; resize: vertical; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+  }
+  textarea:focus, input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .hint { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+
+  /* ---------- tabs ---------- */
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tab {
+    border: 0; background: transparent; padding: 5px 10px; border-radius: 6px; cursor: pointer;
+    color: var(--muted); font-weight: 500;
+  }
+  .tab.on { background: var(--surface-2); color: var(--text); }
+  .tab .n { font-size: 11px; margin-left: 4px; opacity: .7; }
+
+  /* ---------- job list ---------- */
+  .jobs { list-style: none; margin: 0; padding: 0; }
+  .job {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px;
+    padding: 14px 16px; border-bottom: 1px solid var(--border); cursor: pointer;
+  }
+  .job:last-child { border-bottom: 0; }
+  .job:hover { background: var(--surface-2); }
+  .job .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .hook { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .meta { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 12px; grid-column: 1 / -1; align-items: center; }
+  .job .right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .job .err { grid-column: 1 / -1; color: var(--bad); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 2px 9px;
+    font-size: 12px; font-weight: 500; background: var(--surface-2); color: var(--muted); white-space: nowrap;
+  }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.run { background: var(--accent-soft); color: var(--accent); }
+  .pill.bad { background: var(--bad-soft); color: var(--bad); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.run::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: .25; } }
+
+  /* stage track */
+  .track { display: flex; gap: 3px; grid-column: 1 / -1; }
+  .step { flex: 1; min-width: 0; }
+  .step .bar { height: 5px; border-radius: 3px; background: var(--surface-2); }
+  .step .lbl { font-size: 11px; color: var(--muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .step.done .bar { background: var(--ok); }
+  .step.run .bar { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  .step.queued .bar { background: repeating-linear-gradient(90deg, var(--accent) 0 4px, transparent 4px 8px); opacity: .6; }
+  .step.fail .bar { background: var(--bad); }
+  .step.paused .bar { background: var(--warn); }
+  .step.skip .bar { background: transparent; border: 1px dashed var(--border); height: 5px; }
+  .step.run .lbl, .step.fail .lbl { color: var(--text); font-weight: 500; }
+
+  .empty { padding: 40px 16px; text-align: center; color: var(--muted); }
+
+  /* ---------- topics ---------- */
+  .topics { list-style: none; margin: 0; padding: 0; }
+  .topics li { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  .topics li:last-child { border-bottom: 0; }
+  .topics .t { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; }
+  .topics .txt { font-size: 13px; overflow-wrap: anywhere; }
+  .topics .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  /* ---------- drawer ---------- */
+  .scrim {
+    position: fixed; inset: 0; background: rgba(0,0,0,.35); opacity: 0; pointer-events: none;
+    transition: opacity .2s; z-index: 20;
+  }
+  .scrim.show { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(720px, 100%); z-index: 21;
+    background: var(--bg); border-left: 1px solid var(--border);
+    transform: translateX(100%); transition: transform .25s ease; display: flex; flex-direction: column;
+  }
+  .drawer.show { transform: none; }
+  .drawer-h { display: flex; align-items: flex-start; gap: 10px; padding: 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .drawer-h h3 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+  .drawer-b { overflow-y: auto; padding: 16px; display: grid; gap: 16px; }
+  .kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; font-size: 13px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .errbox {
+    background: var(--bad-soft); color: var(--bad); border-radius: 8px; padding: 10px 12px;
+    font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  select, input[type="text"], input[type="password"], input[type="url"] {
+    padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+  }
+  video { width: 100%; max-height: 420px; border-radius: 10px; background: #000; }
+
+  .scenes { display: grid; gap: 10px; }
+  .scene { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; padding: 12px; }
+  .scene .img {
+    width: 96px; aspect-ratio: 9 / 16; border-radius: 8px; background: var(--surface-2);
+    object-fit: cover; display: grid; place-items: center; color: var(--muted); font-size: 11px;
+  }
+  .scene .n { font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .scene p { margin: 4px 0 6px; }
+  .scene audio { width: 100%; height: 32px; }
+  .chk { font-size: 11px; }
+  .chk.yes { color: var(--ok); }
+  .chk.no { color: var(--muted); }
+
+  .events { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+  .events li { padding: 8px 0; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: 90px 70px 1fr; gap: 8px; }
+  .events li:last-child { border-bottom: 0; }
+
+  /* ---------- dialog ---------- */
+  dialog {
+    border: 1px solid var(--border); border-radius: var(--radius); padding: 0; width: min(480px, calc(100% - 32px));
+    background: var(--surface); color: var(--text); box-shadow: 0 20px 60px rgba(0,0,0,.25);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.4); }
+  dialog form { display: grid; gap: 14px; padding: 20px; }
+  dialog h3 { margin: 0; }
+  dialog label { display: grid; gap: 6px; font-weight: 500; font-size: 13px; }
+  dialog input { width: 100%; }
+  dialog .actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translate(-50%, 20px); opacity: 0;
+    background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px;
+    transition: .2s; z-index: 40; max-width: calc(100% - 32px); font-weight: 500;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast.bad { background: var(--bad); color: #fff; }
+
+  .spin { width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: rot .7s linear infinite; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+  .skeleton { height: 64px; margin: 12px 16px; border-radius: 8px; background: var(--surface-2); animation: pulse 1.4s infinite; }
+
+  @media (max-width: 960px) {
+    .grid { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .stats .stat:last-child { grid-column: 1 / -1; }
+  }
+  @media (max-width: 560px) {
+    .live .txt { display: none; }
+    .btn .txt { display: none; }
+    .job { grid-template-columns: 1fr; }
+    .job .right { flex-direction: row; align-items: center; }
+    .step .lbl { font-size: 10px; }
+    .kv { grid-template-columns: 1fr; }
+    .kv dt { margin-top: 6px; }
+    .events li { grid-template-columns: 1fr; gap: 2px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <div class="logo">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l11-6.5a1 1 0 0 0 0-1.72l-11-6.5A1 1 0 0 0 8 5.5z"/></svg>
+      </div>
+      Content Studio
+    </div>
+    <div class="spacer"></div>
+    <div class="live" title="Auto-refresh every 20 seconds">
+      <span class="dot" id="liveDot"></span>
+      <span class="txt" id="liveText">Not connected</span>
+    </div>
+    <button class="btn ghost" id="refreshBtn" title="Refresh now">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      <span class="txt">Refresh</span>
+    </button>
+    <button class="btn ghost" id="themeBtn" title="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+    <button class="btn" id="settingsBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      <span class="txt">Settings</span>
+    </button>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="banner" id="banner">
+      <div><strong>Can't load the pipeline.</strong> <span id="bannerText"></span></div>
+    </div>
+
+    <section class="stats">
+      <div class="stat"><div class="label">Videos</div><div class="value" id="sTotal">–</div></div>
+      <div class="stat"><div class="label">In progress</div><div class="value" id="sActive">–</div></div>
+      <div class="stat ok"><div class="label">Delivered</div><div class="value" id="sDone">–</div></div>
+      <div class="stat bad"><div class="label">Needs attention</div><div class="value" id="sBad">–</div></div>
+      <div class="stat"><div class="label">Spend</div><div class="value" id="sCost">–</div></div>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <div class="card-h">
+          <h2>Pipeline</h2>
+          <div class="spacer"></div>
+          <div class="tabs" id="tabs">
+            <button class="tab on" data-f="all">All<span class="n" id="nAll"></span></button>
+            <button class="tab" data-f="active">Active<span class="n" id="nActive"></span></button>
+            <button class="tab" data-f="done">Delivered<span class="n" id="nDone"></span></button>
+            <button class="tab" data-f="bad">Attention<span class="n" id="nBad"></span></button>
+          </div>
+        </div>
+        <ul class="jobs" id="jobs">
+          <li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li>
+        </ul>
+      </section>
+
+      <aside style="display:grid; gap:20px">
+        <section class="card">
+          <div class="card-h"><h2>New topic</h2></div>
+          <form class="card-b" id="topicForm">
+            <textarea id="topicInput" maxlength="500" placeholder="e.g. Why most people quit the gym in February" required></textarea>
+            <div class="row" style="margin-top:10px">
+              <span class="muted" style="font-size:12px" id="topicCount">0 / 500</span>
+              <div class="spacer"></div>
+              <button class="btn primary" type="submit" id="topicBtn">Add topic</button>
+            </div>
+            <p class="hint">Workflow 01 turns each topic into one or more video angles on its next run.</p>
+          </form>
+        </section>
+
+        <section class="card">
+          <div class="card-h"><h2>Recent topics</h2></div>
+          <ul class="topics" id="topics"><li class="muted">–</li></ul>
+        </section>
+      </aside>
+    </div>
+  </div>
+</main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-h">
+    <div style="flex:1; min-width:0">
+      <div class="muted mono" id="dId"></div>
+      <h3 id="dTitle">–</h3>
+    </div>
+    <button class="btn ghost" id="closeDrawer" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="drawer-b" id="dBody"></div>
+</aside>
+
+<dialog id="settings">
+  <form method="dialog" id="settingsForm">
+    <h3>Connect to n8n</h3>
+    <p class="muted" style="margin:0">Import <span class="mono">workflows/10-dashboard-api.json</span> into n8n, activate it, and paste its <b>Production URL</b> and the <span class="mono">dashboard_key</span> from its Config node.</p>
+    <label>Webhook URL
+      <input type="url" id="cfgUrl" placeholder="https://your-n8n.app/webhook/cg-dashboard" required>
+    </label>
+    <label>Dashboard key
+      <input type="password" id="cfgKey" placeholder="The dashboard_key from the Config node" required>
+    </label>
+    <p class="hint" style="margin:0">Saved in this browser only.</p>
+    <div class="actions">
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn primary" id="saveCfg" value="save">Save &amp; connect</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  // ------------------------------------------------------------------ config
+  const STORE = 'cg-dashboard';
+  const REFRESH_MS = 20000;
+
+  const load = () => { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch { return {}; } };
+  const save = v => { try { localStorage.setItem(STORE, JSON.stringify(v)); } catch {} };
+  let settings = load();
+
+  // Order matters: each stage claims from the previous stage's *_ready status.
+  const STEPS = [
+    { key: 'script',  label: 'Script',  run: 'scripting', rank: 0 },
+    { key: 'voice',   label: 'Voice',   run: 'voicing',   rank: 1 },
+    { key: 'images',  label: 'Images',  run: 'imaging',   rank: 2 },
+    { key: 'video',   label: 'Clips',   run: 'animating', rank: 3 },
+    { key: 'render',  label: 'Render',  run: 'editing',   rank: 4 },
+    { key: 'deliver', label: 'Deliver', run: 'uploading', rank: 5 },
+  ];
+  const RANK = {
+    idea_ready: 0, scripting: 0, script_ready: 1, voicing: 1, voice_ready: 2, imaging: 2,
+    images_ready: 3, animating: 3, clips_ready: 4, editing: 4, render_ready: 5, uploading: 5, complete: 6,
+  };
+  const RUNNING = new Set(STEPS.map(s => s.run));
+  const LABEL = {
+    idea_ready: 'Queued', scripting: 'Writing script', script_ready: 'Script ready',
+    voicing: 'Voicing', voice_ready: 'Voice ready', imaging: 'Making images', images_ready: 'Images ready',
+    animating: 'Animating', clips_ready: 'Clips ready', editing: 'Rendering', render_ready: 'Rendered',
+    uploading: 'Uploading', complete: 'Delivered', failed: 'Failed', paused_for_review: 'Paused',
+  };
+
+  let state = { jobs: [], topics: [], filter: 'all', openJob: null, loading: false };
+  let timer = null;
+
+  // ------------------------------------------------------------------ helpers
+  const $ = id => document.getElementById(id);
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // Only ever put http(s) URLs into href/src — the data comes from LLM output.
+  const safeUrl = u => (typeof u === 'string' && /^https?:\/\//i.test(u) ? esc(u) : '');
+  const money = n => '$' + (Number(n) || 0).toFixed(2);
+  const ago = iso => {
+    if (!iso) return '';
+    const s = Math.round((Date.now() - new Date(iso)) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  };
+  const group = j => j.status === 'complete' ? 'done'
+    : (j.status === 'failed' || j.status === 'paused_for_review') ? 'bad' : 'active';
+
+  function toast(msg, bad) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (bad ? ' bad' : '');
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => t.className = 'toast', 3500);
+  }
+
+  async function api(action, extra = {}) {
+    if (!settings.url || !settings.key) throw new Error('Open Settings and connect to n8n first.');
+    let res;
+    try {
+      res = await fetch(settings.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: settings.key, action, ...extra }),
+      });
+    } catch {
+      throw new Error("Couldn't reach n8n. Check the webhook URL and that workflow 10 is active.");
+    }
+    let data = null;
+    try { data = await res.json(); } catch {}
+    if (!data) throw new Error(`n8n answered ${res.status} with no JSON. Check workflow 10's executions in n8n.`);
+    if (!res.ok || data.ok === false) throw new Error(data.error || data.message || `Request failed (${res.status})`);
+    return data;
+  }
+
+  // For failed/paused jobs the status no longer says where it stopped, so work
+  // it out from which outputs exist — the same rule workflow 10 uses to retry.
+  function stepStates(j) {
+    const video = !!j.use_video_gen;
+    const out = STEPS.map(s => ({ ...s, cls: '' }));
+    if (!video) out[3].cls = 'skip';
+
+    if (j.status in RANK) {
+      const r = RANK[j.status];
+      for (const s of out) {
+        if (s.cls === 'skip') continue;
+        if (r > s.rank) s.cls = 'done';
+        else if (r === s.rank) s.cls = RUNNING.has(j.status) ? 'run' : 'queued';
+      }
+      // Stills path jumps images_ready -> clips_ready, skipping the clip step.
+      if (!video && j.status === 'images_ready') out[4].cls = 'queued';
+      return out;
+    }
+
+    const n = j.scenes_total;
+    const have = {
+      script: n > 0,
+      voice: n > 0 && j.scenes_with_audio >= n,
+      images: n > 0 && j.scenes_with_image >= n,
+      video: n > 0 && j.scenes_with_clip >= n,
+      render: !!j.final_video_url,
+      deliver: !!j.drive_link,
+    };
+    let marked = false;
+    for (const s of out) {
+      if (s.cls === 'skip') continue;
+      if (have[s.key]) s.cls = 'done';
+      else if (!marked) { s.cls = j.status === 'failed' ? 'fail' : 'paused'; marked = true; }
+    }
+    return out;
+  }
+
+  function trackHtml(j) {
+    return `<div class="track">${stepStates(j).map(s => `
+      <div class="step ${s.cls}" title="${esc(s.label)}${s.cls === 'skip' ? ' (video generation off)' : ''}">
+        <div class="bar"></div><div class="lbl">${esc(s.label)}</div>
+      </div>`).join('')}</div>`;
+  }
+
+  function pill(status) {
+    const cls = status === 'complete' ? 'ok' : status === 'failed' ? 'bad'
+      : status === 'paused_for_review' ? 'warn' : RUNNING.has(status) ? 'run' : '';
+    return `<span class="pill ${cls}">${esc(LABEL[status] || status)}</span>`;
+  }
+
+  // ------------------------------------------------------------------ render
+  function render() {
+    const jobs = state.jobs;
+    const count = f => jobs.filter(j => group(j) === f).length;
+    const cost = jobs.reduce((a, j) => a + (Number(j.cost_usd) || 0), 0);
+
+    $('sTotal').textContent = jobs.length;
+    $('sActive').textContent = count('active');
+    $('sDone').textContent = count('done');
+    $('sBad').textContent = count('bad');
+    $('sCost').textContent = money(cost);
+    $('nAll').textContent = jobs.length || '';
+    $('nActive').textContent = count('active') || '';
+    $('nDone').textContent = count('done') || '';
+    $('nBad').textContent = count('bad') || '';
+
+    const list = state.filter === 'all' ? jobs : jobs.filter(j => group(j) === state.filter);
+    $('jobs').innerHTML = list.length ? list.map(j => {
+      const scenes = j.scenes_total ? `${j.scenes_total} scenes` : '';
+      const dur = j.est_duration_sec ? `${Math.round(j.est_duration_sec)}s` : '';
+      const drive = safeUrl(j.drive_link);
+      return `
+      <li class="job" data-id="${esc(j.id)}" tabindex="0">
+        <div style="min-width:0">
+          <div class="title">${esc(j.title || 'Untitled')}</div>
+          <div class="hook">${esc(j.hook || '')}</div>
+        </div>
+        <div class="right">
+          ${pill(j.status)}
+          ${drive ? `<a href="${drive}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:12px">Open in Drive ↗</a>` : ''}
+        </div>
+        ${trackHtml(j)}
+        ${j.last_error && group(j) !== 'done' ? `<div class="err" title="${esc(j.last_error)}">⚠ ${esc(j.last_error)}</div>` : ''}
+        <div class="meta">
+          <span>${esc(ago(j.status_changed_at || j.created_at))}</span>
+          ${scenes ? `<span>${scenes}</span>` : ''}
+          ${dur ? `<span>${dur}</span>` : ''}
+          <span>${money(j.cost_usd)}</span>
+          ${j.use_video_gen ? '<span class="pill warn">video gen</span>' : ''}
+          ${j.attempts > 1 ? `<span>attempt ${esc(j.attempts)}</span>` : ''}
+        </div>
+      </li>`;
+    }).join('') : `<li class="empty">${jobs.length ? 'Nothing in this view.' : 'No videos yet. Add a topic to start the pipeline.'}</li>`;
+
+    const tp = state.topics;
+    $('topics').innerHTML = tp.length ? tp.slice(0, 15).map(t => {
+      const cls = t.status === 'done' ? 'ok' : t.status === 'failed' ? 'bad' : t.status === 'ideating' ? 'run' : '';
+      const made = state.jobs.filter(j => j.topic_id === t.id).length;
+      return `<li>
+        <div class="t"><div class="txt">${esc(t.raw_topic)}</div><span class="pill ${cls}">${esc(t.status)}</span></div>
+        <div class="sub">${esc(ago(t.created_at))}${made ? ` · ${made} video${made > 1 ? 's' : ''}` : ''}${t.source && t.source !== 'manual' ? ` · ${esc(t.source)}` : ''}</div>
+        ${t.last_error ? `<div class="sub" style="color:var(--bad)">${esc(t.last_error)}</div>` : ''}
+      </li>`;
+    }).join('') : '<li class="muted">No topics yet.</li>';
+  }
+
+  function setLive(kind, text) {
+    $('liveDot').className = 'dot ' + (kind || '');
+    $('liveText').textContent = text;
+  }
+
+  async function refresh() {
+    if (state.loading) return;
+    state.loading = true;
+    try {
+      const data = await api('status');
+      state.jobs = data.jobs || [];
+      state.topics = data.topics || [];
+      $('banner').classList.remove('show');
+      setLive('on', 'Live · ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      render();
+    } catch (e) {
+      $('bannerText').textContent = e.message;
+      $('banner').classList.add('show');
+      setLive('err', 'Offline');
+      if (!state.jobs.length) $('jobs').innerHTML = '<li class="empty">Connect to n8n in Settings to see your pipeline.</li>';
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  function schedule() {
+    clearInterval(timer);
+    timer = setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+  }
+
+  // ------------------------------------------------------------------ detail drawer
+  async function openJob(id) {
+    state.openJob = id;
+    $('drawer').classList.add('show');
+    $('drawer').setAttribute('aria-hidden', 'false');
+    $('scrim').classList.add('show');
+    const j = state.jobs.find(x => x.id === id);
+    $('dId').textContent = id;
+    $('dTitle').textContent = j?.title || 'Loading…';
+    $('dBody').innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
+    try {
+      const data = await api('job', { job_id: id });
+      if (state.openJob === id) renderJob(data);
+    } catch (e) {
+      $('dBody').innerHTML = `<div class="errbox">${esc(e.message)}</div>`;
+    }
+  }
+
+  function closeJob() {
+    state.openJob = null;
+    $('drawer').classList.remove('show');
+    $('drawer').setAttribute('aria-hidden', 'true');
+    $('scrim').classList.remove('show');
+    $('dBody').querySelectorAll('video, audio').forEach(m => m.pause());
+  }
+
+  function renderJob({ job, scenes, events, suggested_from }) {
+    $('dTitle').textContent = job.title || 'Untitled';
+    const listed = state.jobs.find(x => x.id === job.id) || {};
+    const merged = {
+      ...listed, ...job,
+      scenes_total: scenes.length,
+      scenes_with_audio: scenes.filter(s => s.audio_url).length,
+      scenes_with_image: scenes.filter(s => s.image_url).length,
+      scenes_with_clip: scenes.filter(s => s.clip_url).length,
+    };
+    const video = safeUrl(job.final_video_url);
+    const drive = safeUrl(job.drive_link);
+    const busy = RUNNING.has(job.status);
+
+    const opts = [
+      ['auto', `Auto${suggested_from ? ' — ' + suggested_from : ''}`],
+      ['script', 'Script (rewrites all scenes)'],
+      ['voice', 'Voiceover'],
+      ['images', 'Images'],
+      ...(job.use_video_gen ? [['video', 'Video clips']] : []),
+      ['render', 'Render'],
+      ['deliver', 'Deliver to Drive'],
+    ];
+
+    $('dBody').innerHTML = `
+      <section class="card card-b" style="display:grid; gap:14px">
+        <div class="row" style="flex-wrap:wrap">${pill(job.status)}<span class="muted" style="font-size:12px">updated ${esc(ago(job.status_changed_at))}</span></div>
+        ${trackHtml(merged)}
+        ${job.last_error ? `<div class="errbox">${esc(job.last_error)}</div>` : ''}
+        <dl class="kv">
+          <dt>Hook</dt><dd>${esc(job.hook || '–')}</dd>
+          <dt>Audience</dt><dd>${esc(job.audience || '–')}</dd>
+          <dt>Style</dt><dd>${esc(job.style_suffix || '–')}</dd>
+          <dt>Format</dt><dd>${esc(job.aspect || '')} · ${esc(job.width)}×${esc(job.height)}${job.use_video_gen ? ' · video generation on' : ' · stills (Ken Burns)'}</dd>
+          <dt>Length</dt><dd>${job.voice_duration_sec ? esc(Math.round(job.voice_duration_sec)) + 's' : '–'} · ${scenes.length} scenes</dd>
+          <dt>Cost</dt><dd>${money(job.cost_usd)} · attempt ${esc(job.attempts || 0)}</dd>
+          <dt>Created</dt><dd>${esc(new Date(job.created_at).toLocaleString())}</dd>
+          ${drive ? `<dt>Drive</dt><dd><a href="${drive}" target="_blank" rel="noopener">Open in Google Drive ↗</a></dd>` : ''}
+        </dl>
+      </section>
+
+      ${video ? `<section><video src="${video}" controls preload="metadata" playsinline></video></section>` : ''}
+
+      <section class="card card-b" style="display:grid; gap:10px">
+        <div style="font-weight:600">Retry / re-run</div>
+        <div class="row" style="flex-wrap:wrap">
+          <select id="retryFrom" ${busy ? 'disabled' : ''}>${opts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select>
+          <button class="btn primary" id="retryBtn" ${busy ? 'disabled' : ''}>Retry from here</button>
+        </div>
+        <p class="hint" style="margin:0">${busy
+          ? 'A worker is on this job right now. Retry unlocks when it finishes or the sweeper resets it.'
+          : 'Each stage skips work that already exists, so only missing pieces are regenerated. Auto picks the first missing stage.'}</p>
+      </section>
+
+      <section>
+        <div style="font-weight:600; margin-bottom:8px">Scenes</div>
+        <div class="scenes">${scenes.length ? scenes.map(s => {
+          const img = safeUrl(s.image_url), aud = safeUrl(s.audio_url), clip = safeUrl(s.clip_url);
+          return `<div class="card scene">
+            ${img ? `<a href="${img}" target="_blank" rel="noopener"><img class="img" src="${img}" alt="Scene ${esc(s.scene_number)}" loading="lazy"></a>` : '<div class="img">no image</div>'}
+            <div style="min-width:0">
+              <div class="n">
+                <b style="color:var(--text)">Scene ${esc(s.scene_number)}</b>
+                ${s.audio_duration_sec ? `<span>${Number(s.audio_duration_sec).toFixed(1)}s</span>` : ''}
+                <span class="chk ${aud ? 'yes' : 'no'}">${aud ? '✓' : '○'} voice</span>
+                <span class="chk ${img ? 'yes' : 'no'}">${img ? '✓' : '○'} image</span>
+                ${job.use_video_gen ? `<span class="chk ${clip ? 'yes' : 'no'}">${clip ? '✓' : '○'} clip</span>` : ''}
+                ${clip ? `<a href="${clip}" target="_blank" rel="noopener">clip ↗</a>` : ''}
+              </div>
+              <p>${esc(s.narration || '')}</p>
+              ${s.on_screen_text ? `<div class="muted" style="font-size:12px">On screen: “${esc(s.on_screen_text)}”</div>` : ''}
+              ${s.last_error ? `<div class="errbox" style="margin-top:6px">${esc(s.last_error)}</div>` : ''}
+              ${aud ? `<audio src="${aud}" controls preload="none" style="margin-top:6px"></audio>` : ''}
+              <details style="margin-top:6px"><summary class="muted" style="font-size:12px; cursor:pointer">Prompts</summary>
+                <div class="mono muted" style="margin-top:6px; white-space:pre-wrap; overflow-wrap:anywhere">${esc(s.image_prompt || '')}${s.motion_prompt ? '\n\nmotion: ' + esc(s.motion_prompt) : ''}</div>
+              </details>
+            </div>
+          </div>`;
+        }).join('') : '<div class="card empty">No scenes yet. They appear once the script stage finishes.</div>'}</div>
+      </section>
+
+      <section class="card card-b">
+        <div style="font-weight:600; margin-bottom:6px">Event log</div>
+        ${events.length ? `<ul class="events">${events.map(e => `
+          <li><span class="muted">${esc(ago(e.created_at))}</span>
+          <span class="pill ${e.level === 'error' ? 'bad' : ''}">${esc(e.stage || '–')}</span>
+          <span style="overflow-wrap:anywhere">${esc(e.message || '')}</span></li>`).join('')}</ul>`
+          : '<div class="muted" style="font-size:13px">No events logged for this job.</div>'}
+      </section>`;
+
+    const btn = $('retryBtn');
+    if (btn) btn.onclick = async () => {
+      const from = $('retryFrom').value;
+      if (from === 'script' && !confirm('Re-running the script replaces every scene, including paid-for voice and images. Continue?')) return;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spin"></span> Queuing…';
+      try {
+        const r = await api('retry', { job_id: job.id, from });
+        toast(r.message || 'Queued');
+        await refresh();
+        openJob(job.id);
+      } catch (e) {
+        toast(e.message, true);
+        btn.disabled = false;
+        btn.textContent = 'Retry from here';
+      }
+    };
+  }
+
+  // ------------------------------------------------------------------ events
+  $('jobs').addEventListener('click', e => {
+    const li = e.target.closest('.job');
+    if (li) openJob(li.dataset.id);
+  });
+  $('jobs').addEventListener('keydown', e => {
+    const li = e.target.closest('.job');
+    if (li && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openJob(li.dataset.id); }
+  });
+  $('closeDrawer').onclick = closeJob;
+  $('scrim').onclick = closeJob;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && state.openJob) closeJob(); });
+
+  $('tabs').addEventListener('click', e => {
+    const b = e.target.closest('.tab');
+    if (!b) return;
+    state.filter = b.dataset.f;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t === b));
+    render();
+  });
+
+  $('topicInput').addEventListener('input', e => { $('topicCount').textContent = `${e.target.value.length} / 500`; });
+  $('topicForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const topic = $('topicInput').value.trim();
+    if (topic.length < 3) return toast('Topic is too short', true);
+    const btn = $('topicBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span> Adding…';
+    try {
+      await api('topic', { topic });
+      $('topicInput').value = '';
+      $('topicCount').textContent = '0 / 500';
+      toast('Topic added. Workflow 01 picks it up on its next run.');
+      refresh();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Add topic';
+    }
+  });
+
+  $('refreshBtn').onclick = () => { refresh(); if (state.openJob) openJob(state.openJob); };
+
+  const settingsDlg = $('settings');
+  function openSettings() {
+    $('cfgUrl').value = settings.url || '';
+    $('cfgKey').value = settings.key || '';
+    settingsDlg.showModal();
+  }
+  $('settingsBtn').onclick = openSettings;
+  settingsDlg.addEventListener('close', () => {
+    if (settingsDlg.returnValue !== 'save') return;
+    settings = { ...settings, url: $('cfgUrl').value.trim(), key: $('cfgKey').value };
+    save(settings);
+    refresh();
+  });
+
+  $('themeBtn').onclick = () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme
+      ? root.dataset.theme === 'dark'
+      : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    save({ ...settings, theme: root.dataset.theme });
+    settings.theme = root.dataset.theme;
+  };
+  if (settings.theme) document.documentElement.dataset.theme = settings.theme;
+
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+
+  // ------------------------------------------------------------------ boot
+  if (settings.url && settings.key) refresh();
+  else {
+    $('jobs').innerHTML = '<li class="empty">Connect to n8n in Settings to see your pipeline.</li>';
+    openSettings();
+  }
+  schedule();
+})();
+</script>
+</body>
+</html>

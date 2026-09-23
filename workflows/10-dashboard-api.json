@@ -1,0 +1,467 @@
+{
+  "name": "CG 10 — Dashboard API",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cg-dashboard",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "cg10-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-620, 300],
+      "webhookId": "cg10-dashboard-webhook",
+      "notes": "The website's only backend. One POST endpoint; the body's `action` field picks the route. Copy the Production URL into the website's settings."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1",
+              "name": "supabase_url",
+              "value": "https://YOUR_PROJECT.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "d2",
+              "name": "dashboard_key",
+              "value": "CHANGE_ME",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg10-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-400, 300],
+      "notes": "dashboard_key is the password the website sends with every request. Use a long random string — anyone with the webhook URL and this key can add topics and retry jobs."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Auth + input validation for every route. Anything that reaches a Supabase\n// URL below has been checked here first — job ids especially, since they\n// are interpolated into PostgREST filters.\nconst cfg = $('Config').first().json;\nconst req = $('Webhook').first().json;\nconst body = req.body && typeof req.body === 'object' ? req.body : {};\nconst fail = (code, error) => [{ json: { action: 'error', code, body: { ok: false, error } } }];\n\nif (!cfg.dashboard_key || cfg.dashboard_key === 'CHANGE_ME') {\n  return fail(500, 'Set dashboard_key in the Config node of workflow 10 first');\n}\nif (body.key !== cfg.dashboard_key) return fail(401, 'Wrong dashboard key');\n\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst action = String(body.action || '');\n\nif (action === 'status') return [{ json: { action } }];\n\nif (action === 'job' || action === 'retry') {\n  const jobId = String(body.job_id || '');\n  if (!UUID.test(jobId)) return fail(400, 'job_id must be a UUID');\n  const from = String(body.from || 'auto');\n  const FROM = ['auto', 'script', 'voice', 'images', 'video', 'render', 'deliver'];\n  if (action === 'retry' && !FROM.includes(from)) {\n    return fail(400, 'from must be one of: ' + FROM.join(', '));\n  }\n  return [{ json: { action, job_id: jobId.toLowerCase(), from } }];\n}\n\nif (action === 'topic') {\n  const topic = String(body.topic || '').trim();\n  if (topic.length < 3 || topic.length > 500) return fail(400, 'Topic must be 3-500 characters');\n  return [{ json: { action, topic } }];\n}\n\nreturn fail(400, 'Unknown action: ' + action);"
+      },
+      "id": "cg10-validate",
+      "name": "Validate Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-180, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "id": "r1", "leftValue": "={{ $json.action }}", "rightValue": "status", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "status"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "id": "r2", "leftValue": "={{ $json.action }}", "rightValue": "job", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "job"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "id": "r3", "leftValue": "={{ $json.action }}", "rightValue": "topic", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "topic"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "id": "r4", "leftValue": "={{ $json.action }}", "rightValue": "retry", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "retry"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  { "id": "r5", "leftValue": "={{ $json.action }}", "rightValue": "error", "operator": { "type": "string", "operation": "equals" } }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "error"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cg10-route",
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [40, 280]
+    },
+
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?select=id,topic_id,title,hook,audience,status,attempts,last_error,use_video_gen,cost_usd,drive_link,final_video_url,created_at,status_changed_at&order=created_at.desc&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {}
+      },
+      "id": "cg10-get-jobs",
+      "name": "Get Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, -40],
+      "credentials": { "httpCustomAuth": { "id": "SUPABASE_CRED", "name": "Supabase service_role" } },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/pipeline_status?select=id,scenes_total,scenes_with_audio,scenes_with_image,scenes_with_clip,est_duration_sec&id=in.({{ $('Get Jobs').all().map(i => i.json.id).filter(Boolean).join(',') || '00000000-0000-0000-0000-000000000000' }})",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {}
+      },
+      "id": "cg10-get-progress",
+      "name": "Get Scene Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [540, -40],
+      "credentials": { "httpCustomAuth": { "id": "SUPABASE_CRED", "name": "Supabase service_role" } },
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "notes": "Filtered to the same job ids as Get Jobs, so the two lists always line up."
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/topics?select=id,raw_topic,source,status,attempts,last_error,created_at&order=created_at.desc&limit=50",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {}
+      },
+      "id": "cg10-get-topics",
+      "name": "Get Topics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, -40],
+      "credentials": { "httpCustomAuth": { "id": "SUPABASE_CRED", "name": "Supabase service_role" } },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// alwaysOutputData turns an empty table into one empty item, so filter on id.\nconst rows = name => $(name).all().map(i => i.json).filter(r => r && r.id);\nconst num = v => (v == null ? null : Number(v));\n\nconst progress = Object.fromEntries(rows('Get Scene Progress').map(r => [r.id, r]));\nconst jobs = rows('Get Jobs').map(j => {\n  const p = progress[j.id] || {};\n  return {\n    ...j,\n    cost_usd:          num(j.cost_usd) || 0,\n    scenes_total:      num(p.scenes_total) || 0,\n    scenes_with_audio: num(p.scenes_with_audio) || 0,\n    scenes_with_image: num(p.scenes_with_image) || 0,\n    scenes_with_clip:  num(p.scenes_with_clip) || 0,\n    est_duration_sec:  num(p.est_duration_sec)\n  };\n});\n\nreturn [{ json: { code: 200, body: {\n  ok: true,\n  generated_at: new Date().toISOString(),\n  jobs,\n  topics: rows('Get Topics')\n} } }];"
+      },
+      "id": "cg10-build-status",
+      "name": "Build Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [980, -40]
+    },
+
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $('Validate Request').first().json.job_id }}&select=*",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {}
+      },
+      "id": "cg10-get-job",
+      "name": "Get Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 160],
+      "credentials": { "httpCustomAuth": { "id": "SUPABASE_CRED", "name": "Supabase service_role" } },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes?job_id=eq.{{ $('Validate Request').first().json.job_id }}&select=*&order=scene_number",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {}
+      },
+      "id": "cg10-get-scenes",
+      "name": "Get Scenes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [540, 160],
+      "credentials": { "httpCustomAuth": { "id": "SUPABASE_CRED", "name": "Supabase service_role" } },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/job_events?job_id=eq.{{ $('Validate Request').first().json.job_id }}&select=*&order=created_at.desc&limit=30",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {}
+      },
+      "id": "cg10-get-events",
+      "name": "Get Events",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 160],
+      "credentials": { "httpCustomAuth": { "id": "SUPABASE_CRED", "name": "Supabase service_role" } },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = name => $(name).all().map(i => i.json).filter(r => r && r.id);\nconst job = rows('Get Job')[0];\nif (!job) return [{ json: { code: 404, body: { ok: false, error: 'Job not found' } } }];\nconst scenes = rows('Get Scenes');\n\n// Same rule as Plan Retry: the first stage whose output is missing.\nconst all = f => scenes.length > 0 && scenes.every(f);\nlet suggested = null;\nif (!job.script || scenes.length === 0) suggested = 'script';\nelse if (!all(s => s.audio_url && s.audio_duration_sec)) suggested = 'voice';\nelse if (!all(s => s.image_url)) suggested = 'images';\nelse if (job.use_video_gen && !all(s => s.clip_url)) suggested = 'video';\nelse if (!job.final_video_url) suggested = 'render';\nelse if (!job.drive_link) suggested = 'deliver';\n\nreturn [{ json: { code: 200, body: {\n  ok: true,\n  job,\n  scenes,\n  events: rows('Get Events'),\n  suggested_from: suggested\n} } }];"
+      },
+      "id": "cg10-build-job",
+      "name": "Build Job Detail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [980, 160]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/topics",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Prefer", "value": "return=representation" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ raw_topic: $json.topic, source: 'dashboard' }) }}",
+        "options": {}
+      },
+      "id": "cg10-insert-topic",
+      "name": "Insert Topic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 360],
+      "credentials": { "httpCustomAuth": { "id": "SUPABASE_CRED", "name": "Supabase service_role" } },
+      "notes": "Workflow 01 picks the new row up on its next scheduled run."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { code: 201, body: { ok: true, topic: $input.first().json } } }];"
+      },
+      "id": "cg10-topic-result",
+      "name": "Topic Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [540, 360]
+    },
+
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $json.job_id }}&select=*",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {}
+      },
+      "id": "cg10-retry-get-job",
+      "name": "Get Job For Retry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 560],
+      "credentials": { "httpCustomAuth": { "id": "SUPABASE_CRED", "name": "Supabase service_role" } },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/scenes?job_id=eq.{{ $('Validate Request').first().json.job_id }}&select=id,scene_number,audio_url,audio_duration_sec,image_url,clip_url&order=scene_number",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {}
+      },
+      "id": "cg10-retry-get-scenes",
+      "name": "Get Scenes For Retry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [540, 560],
+      "credentials": { "httpCustomAuth": { "id": "SUPABASE_CRED", "name": "Supabase service_role" } },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Replay = set the job back to the status the chosen stage claims from.\n// Every stage skips work already done, so this only regenerates what is\n// missing (README: Operating it) — except 'script', which replaces scenes.\nconst req = $('Validate Request').first().json;\nconst rows = name => $(name).all().map(i => i.json).filter(r => r && r.id);\nconst job = rows('Get Job For Retry')[0];\nconst scenes = rows('Get Scenes For Retry');\nconst out = (code, body, extra = {}) => [{ json: { code, body, ...extra } }];\n\nif (!job) return out(404, { ok: false, error: 'Job not found' });\n\n// Never yank a job out from under a running worker.\nconst BUSY = ['scripting', 'voicing', 'imaging', 'animating', 'editing', 'uploading'];\nif (BUSY.includes(job.status)) {\n  return out(409, { ok: false, error: 'Job is being worked on right now (' + job.status + '). Wait for it to finish, or for the sweeper to reset it.' });\n}\n\nconst STATUS_FOR = {\n  script:  'idea_ready',\n  voice:   'script_ready',\n  images:  'voice_ready',\n  video:   'images_ready',\n  render:  'clips_ready',\n  deliver: 'render_ready'\n};\n\nlet from = req.from;\nif (from === 'auto') {\n  const all = f => scenes.length > 0 && scenes.every(f);\n  if (!job.script || scenes.length === 0) from = 'script';\n  else if (!all(s => s.audio_url && s.audio_duration_sec)) from = 'voice';\n  else if (!all(s => s.image_url)) from = 'images';\n  else if (job.use_video_gen && !all(s => s.clip_url)) from = 'video';\n  else if (!job.final_video_url) from = 'render';\n  else if (!job.drive_link) from = 'deliver';\n  else return out(409, { ok: false, error: 'Nothing is missing — this job is complete. Pick a stage explicitly to re-run it.' });\n}\n\nif (from === 'video' && !job.use_video_gen) {\n  return out(400, { ok: false, error: 'Video generation is off for this job, so there is no video stage to re-run. Use render instead.' });\n}\n\nreturn out(200, null, {\n  job_id: job.id,\n  prev_status: job.status,\n  from,\n  patch: {\n    status: STATUS_FOR[from],\n    attempts: 0,\n    claimed_at: null,\n    last_error: null,\n    status_changed_at: new Date().toISOString()\n  }\n});"
+      },
+      "id": "cg10-plan-retry",
+      "name": "Plan Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 560]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.code }}", "rightValue": 200, "operator": { "type": "number", "operation": "equals" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg10-retry-ok",
+      "name": "Retry allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [980, 560]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/jobs?id=eq.{{ $json.job_id }}&status=eq.{{ $json.prev_status }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Prefer", "value": "return=representation" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patch) }}",
+        "options": {}
+      },
+      "id": "cg10-apply-retry",
+      "name": "Apply Retry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 480],
+      "credentials": { "httpCustomAuth": { "id": "SUPABASE_CRED", "name": "Supabase service_role" } },
+      "alwaysOutputData": true,
+      "notes": "The status=eq filter makes this a compare-and-set: if a worker claimed the job between Plan Retry and now, zero rows update and Retry Result reports a conflict."
+    },
+    {
+      "parameters": {
+        "jsCode": "const plan = $('Plan Retry').first().json;\nconst updated = $input.all().map(i => i.json).filter(r => r && r.id);\nif (!updated.length) {\n  return [{ json: { code: 409, body: { ok: false, error: 'The job changed while you were retrying it. Refresh and try again.' } } }];\n}\nreturn [{ json: { code: 200, body: {\n  ok: true,\n  job_id: plan.job_id,\n  from: plan.from,\n  status: plan.patch.status,\n  message: 'Queued from ' + plan.from + ': ' + plan.prev_status + ' → ' + plan.patch.status\n} } }];"
+      },
+      "id": "cg10-retry-result",
+      "name": "Retry Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1420, 480]
+    },
+
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "responseCode": "={{ $json.code }}"
+        }
+      },
+      "id": "cg10-respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1640, 300],
+      "notes": "Every route ends here with { code, body }."
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Validate Request", "type": "main", "index": 0 }]]
+    },
+    "Validate Request": {
+      "main": [[{ "node": "Route", "type": "main", "index": 0 }]]
+    },
+    "Route": {
+      "main": [
+        [{ "node": "Get Jobs", "type": "main", "index": 0 }],
+        [{ "node": "Get Job", "type": "main", "index": 0 }],
+        [{ "node": "Insert Topic", "type": "main", "index": 0 }],
+        [{ "node": "Get Job For Retry", "type": "main", "index": 0 }],
+        [{ "node": "Respond", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Jobs": {
+      "main": [[{ "node": "Get Scene Progress", "type": "main", "index": 0 }]]
+    },
+    "Get Scene Progress": {
+      "main": [[{ "node": "Get Topics", "type": "main", "index": 0 }]]
+    },
+    "Get Topics": {
+      "main": [[{ "node": "Build Status", "type": "main", "index": 0 }]]
+    },
+    "Build Status": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    },
+    "Get Job": {
+      "main": [[{ "node": "Get Scenes", "type": "main", "index": 0 }]]
+    },
+    "Get Scenes": {
+      "main": [[{ "node": "Get Events", "type": "main", "index": 0 }]]
+    },
+    "Get Events": {
+      "main": [[{ "node": "Build Job Detail", "type": "main", "index": 0 }]]
+    },
+    "Build Job Detail": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    },
+    "Insert Topic": {
+      "main": [[{ "node": "Topic Result", "type": "main", "index": 0 }]]
+    },
+    "Topic Result": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    },
+    "Get Job For Retry": {
+      "main": [[{ "node": "Get Scenes For Retry", "type": "main", "index": 0 }]]
+    },
+    "Get Scenes For Retry": {
+      "main": [[{ "node": "Plan Retry", "type": "main", "index": 0 }]]
+    },
+    "Plan Retry": {
+      "main": [[{ "node": "Retry allowed?", "type": "main", "index": 0 }]]
+    },
+    "Retry allowed?": {
+      "main": [
+        [{ "node": "Apply Retry", "type": "main", "index": 0 }],
+        [{ "node": "Respond", "type": "main", "index": 0 }]
+      ]
+    },
+    "Apply Retry": {
+      "main": [[{ "node": "Retry Result", "type": "main", "index": 0 }]]
+    },
+    "Retry Result": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

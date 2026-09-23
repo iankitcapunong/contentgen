@@ -26,6 +26,10 @@ workflows/
   06-render.json            scenes -> Shotstack timeline -> mp4
   07-deliver.json           mp4    -> Google Drive -> Sheet row
   99-sweeper.json           resets jobs whose worker died
+  10-dashboard-api.json     backend for the website (webhook API)
+
+web/
+  index.html           the dashboard website — open it in a browser
 
 docs/credentials.md    how to create each of the 7 credentials
 ```
@@ -122,6 +126,41 @@ Activate `99-sweeper.json`. Feed topics in by inserting rows into `topics` (by h
 Sheet, from an RSS trigger — anything that can write a row).
 
 ---
+
+## Dashboard (website)
+
+`web/index.html` is a single-page dashboard: add topics, watch every job move through the
+stages, open a job to see its scenes (images, voice, narration), watch the final video, and
+retry a failed job from any stage.
+
+The page never talks to Supabase directly — RLS blocks the anon key, and the service_role
+key must never reach a browser. Instead it calls **workflow 10**, which holds the key.
+
+1. Import `workflows/10-dashboard-api.json`. Pick the `Supabase service_role` credential
+   on each HTTP node (same as the other workflows).
+2. In its **Config** node set `supabase_url`, and set `dashboard_key` to a long random
+   string. This is the dashboard's password.
+3. **Activate** the workflow, open the Webhook node and copy the **Production URL**
+   (ends in `/webhook/cg-dashboard`).
+4. Open `web/index.html` in a browser (double-click works, no server needed). Paste the URL
+   and key into Settings. Both are stored only in that browser.
+
+To use it from anywhere, host the one file on any static host (Vercel, Netlify, GitHub
+Pages). The webhook allows all origins; to lock it down, set the Webhook node's
+**Allowed Origins** option to your site's URL.
+
+The API is one POST endpoint; the body's `action` picks the route:
+
+| action | body | does |
+|---|---|---|
+| `status` | – | last 100 jobs with scene progress, last 50 topics |
+| `job` | `job_id` | one job with its scenes and event log |
+| `topic` | `topic` | inserts a row into `topics` |
+| `retry` | `job_id`, `from` | resets the job to re-run from `script` / `voice` / `images` / `video` / `render` / `deliver`, or `auto` (first stage whose output is missing) |
+
+Every request also carries `key`. Retry refuses jobs a worker currently holds, and the
+reset is a compare-and-set on the old status, so it can't collide with a worker claiming
+the job at the same moment.
 
 ## Operating it
 
