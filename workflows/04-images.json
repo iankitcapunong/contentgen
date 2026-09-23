@@ -30,26 +30,20 @@
             },
             {
               "id": "d2",
-              "name": "fal_image_endpoint",
-              "value": "https://fal.run/fal-ai/flux/dev",
+              "name": "kie_image_model",
+              "value": "google/nano-banana",
               "type": "string"
             },
             {
               "id": "d3",
-              "name": "image_width",
-              "value": 832,
-              "type": "number"
+              "name": "aspect_ratio",
+              "value": "9:16",
+              "type": "string"
             },
             {
               "id": "d4",
-              "name": "image_height",
-              "value": 1472,
-              "type": "number"
-            },
-            {
-              "id": "d5",
-              "name": "num_inference_steps",
-              "value": 28,
+              "name": "poll_timeout_minutes",
+              "value": 5,
               "type": "number"
             }
           ]
@@ -61,7 +55,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [-620, 300],
-      "notes": "832x1472 is a native-friendly 9:16 generation size. Do NOT generate at 1080x1920 — it is outside the model's trained resolution range and gets slow and artifact-prone. Shotstack scales up to 1080x1920 at render time."
+      "notes": "kie_image_model is any kie.ai text-to-image model that takes { prompt, aspect_ratio, output_format }. google/nano-banana does; other models may name their inputs differently — check the model's page on docs.kie.ai before swapping."
     },
     {
       "parameters": {
@@ -201,36 +195,163 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $('Config').first().json.fal_image_endpoint }}",
+        "url": "https://api.kie.ai/api/v1/jobs/createTask",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"prompt\": {{ JSON.stringify($json.image_prompt) }},\n  \"image_size\": {\n    \"width\": {{ $('Config').first().json.image_width }},\n    \"height\": {{ $('Config').first().json.image_height }}\n  },\n  \"num_images\": 1,\n  \"num_inference_steps\": {{ $('Config').first().json.num_inference_steps }},\n  \"seed\": {{ Number($('Claim Job').first().json.seed || 0) + Number($json.scene_number) }},\n  \"enable_safety_checker\": true\n}",
+        "jsonBody": "={{ JSON.stringify({ model: $('Config').first().json.kie_image_model, input: { prompt: $json.image_prompt, aspect_ratio: $('Config').first().json.aspect_ratio, output_format: 'jpeg' } }) }}",
         "options": {
-          "timeout": 180000
+          "timeout": 60000
         }
       },
       "id": "cg04-generate",
-      "name": "Generate Image (fal)",
+      "name": "Create Image Task (kie)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [700, 320],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "FAL_CRED",
-          "name": "fal.ai"
+          "id": "KIE_CRED",
+          "name": "kie.ai"
         }
       },
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
-      "notes": "Seed = job seed + scene number: different image each scene, but reproducible. Visual consistency comes from the style_suffix that workflow 02 welded onto every prompt."
+      "notes": "kie.ai is asynchronous: this only queues the image and returns a taskId. Visual consistency comes from the style_suffix that workflow 02 welded onto every prompt."
     },
     {
       "parameters": {
-        "url": "={{ $json.images[0].url }}",
+        "jsCode": "// kie.ai can answer HTTP 200 with a failure code in the body (401 bad key,\n// 402 out of credits, 422 bad input), so check the body, not just the status.\nconst r = $input.first().json;\nif (r.code !== 200 || !r.data?.taskId) {\n  throw new Error('kie.ai rejected the image task (' + r.code + '): ' + (r.msg || JSON.stringify(r).slice(0, 300)));\n}\nreturn [{ json: {\n  task_id: r.data.taskId,\n  poll_deadline: $now.plus({ minutes: $('Config').first().json.poll_timeout_minutes }).toISO()\n} }];"
+      },
+      "id": "cg04-check-created",
+      "name": "Task Accepted?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 320],
+      "onError": "continueErrorOutput",
+      "notes": "Also stamps this scene's own poll deadline. This node re-runs for every scene, so .first() always returns THIS scene's task and deadline."
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "cg04-wait",
+      "name": "Wait 5s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1140, 320],
+      "webhookId": "cg04-wait-webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://api.kie.ai/api/v1/jobs/recordInfo",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "taskId",
+              "value": "={{ $('Task Accepted?').first().json.task_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "cg04-status",
+      "name": "Check Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1360, 320],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KIE_CRED",
+          "name": "kie.ai"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
+      "parameters": {
+        "jsCode": "// state: waiting | queuing | generating | success | fail\n// resultJson is a JSON *string* holding { resultUrls: [...] }.\nconst r = $input.first().json;\nconst d = r.data || {};\nconst task = $('Task Accepted?').first().json.task_id;\n\nif (d.state === 'fail') {\n  throw new Error('kie.ai image task ' + task + ' failed: ' + (d.failMsg || d.failCode || 'no reason given'));\n}\nif (d.state === 'success') {\n  let result = {};\n  try { result = JSON.parse(d.resultJson || '{}'); } catch (e) {}\n  const url = result.resultUrls?.[0];\n  if (!url) throw new Error('kie.ai image task ' + task + ' succeeded but returned no URL: ' + String(d.resultJson).slice(0, 300));\n  return [{ json: { state: 'success', url } }];\n}\n// Still running. `error` is only used if the poll deadline passes.\nreturn [{ json: {\n  state: d.state || 'unknown',\n  error: 'image still ' + (d.state || 'pending') + ' when the poll deadline passed (kie task ' + task + ')'\n} }];"
+      },
+      "id": "cg04-parse",
+      "name": "Parse Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1580, 320],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg04-ready",
+      "name": "Image ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1800, 320]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $now.toMillis() }}",
+              "rightValue": "={{ DateTime.fromISO($('Task Accepted?').first().json.poll_deadline).toMillis() }}",
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cg04-poll-again",
+      "name": "Poll again?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1800, 540]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
         "options": {
           "response": {
             "response": {
@@ -245,10 +366,10 @@
       "name": "Download Image",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [920, 320],
+      "position": [2020, 220],
       "retryOnFail": true,
       "maxTries": 3,
-      "notes": "fal-hosted URLs expire. Always re-host to Storage before anything downstream needs them."
+      "notes": "kie.ai deletes generated files after 14 days. Always re-host to Storage before anything downstream needs them."
     },
     {
       "parameters": {
@@ -278,7 +399,7 @@
       "name": "Upload to Storage",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1140, 320],
+      "position": [2240, 220],
       "credentials": {
         "httpCustomAuth": {
           "id": "SUPABASE_CRED",
@@ -303,7 +424,7 @@
       "name": "Update Scene",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1360, 320],
+      "position": [2460, 220],
       "credentials": {
         "httpCustomAuth": {
           "id": "SUPABASE_CRED",
@@ -365,7 +486,7 @@
         "jsonBody": "={{ JSON.stringify({ status: $json.next_status, claimed_at: null, last_error: null }) }}",
         "options": {}
       },
-      "id": "cg04-ready",
+      "id": "cg04-advance",
       "name": "Advance Job",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -393,7 +514,7 @@
       "name": "Retry or Fail",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [920, 520],
+      "position": [1360, 620],
       "credentials": {
         "httpCustomAuth": {
           "id": "SUPABASE_CRED",
@@ -427,13 +548,43 @@
     },
     "Needs an image?": {
       "main": [
-        [{ "node": "Generate Image (fal)", "type": "main", "index": 0 }],
+        [{ "node": "Create Image Task (kie)", "type": "main", "index": 0 }],
         [{ "node": "Loop Scenes", "type": "main", "index": 0 }]
       ]
     },
-    "Generate Image (fal)": {
+    "Create Image Task (kie)": {
+      "main": [
+        [{ "node": "Task Accepted?", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Task Accepted?": {
+      "main": [
+        [{ "node": "Wait 5s", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait 5s": {
+      "main": [[{ "node": "Check Status", "type": "main", "index": 0 }]]
+    },
+    "Check Status": {
+      "main": [[{ "node": "Parse Status", "type": "main", "index": 0 }]]
+    },
+    "Parse Status": {
+      "main": [
+        [{ "node": "Image ready?", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Image ready?": {
       "main": [
         [{ "node": "Download Image", "type": "main", "index": 0 }],
+        [{ "node": "Poll again?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Poll again?": {
+      "main": [
+        [{ "node": "Wait 5s", "type": "main", "index": 0 }],
         [{ "node": "Retry or Fail", "type": "main", "index": 0 }]
       ]
     },

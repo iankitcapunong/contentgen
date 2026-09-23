@@ -21,8 +21,8 @@ workflows/
   01-intake-ideation.json   topic  -> angles -> job rows
   02-script.json            job    -> validated scene JSON      <- the data contract
   03-voiceover.json         scenes -> ElevenLabs audio + exact durations
-  04-images.json            scenes -> fal.ai FLUX stills
-  05-video.json             scenes -> image-to-video clips      <- expensive, off by default
+  04-images.json            scenes -> kie.ai stills (Nano Banana)
+  05-video.json             scenes -> kie.ai image-to-video     <- expensive, off by default
   06-render.json            scenes -> Shotstack timeline -> mp4
   07-deliver.json           mp4    -> Google Drive -> Sheet row
   99-sweeper.json           resets jobs whose worker died
@@ -87,7 +87,7 @@ your Google OAuth before you have spent a cent on generation.
 
 ### Phase 3 — Voice and images (workflows 03, 04)
 
-1. Add `ElevenLabs` and `fal.ai` credentials. Fill in your `voice_id`.
+1. Add `ElevenLabs` and `kie.ai` credentials. Fill in your `voice_id`.
 2. Run them. Verify every scene has `audio_url`, `audio_duration_sec` and `image_url`:
 
    ```sql
@@ -203,8 +203,8 @@ Honest status of what is in this repo:
   dangling `$('Node')` references, no unreachable nodes. That is a structural check only.
 - **Nothing here has been run against the live APIs.** Request and response shapes follow
   each provider's documented behaviour, but verify them on your first manual run —
-  particularly ElevenLabs' `character_end_times_seconds` field (workflow 03) and fal's
-  `status_url` / `response_url` (workflow 05). If a provider has changed a field name, the
+  particularly ElevenLabs' `character_end_times_seconds` field (workflow 03) and kie.ai's
+  `recordInfo` response — `data.state` and the `resultJson` string (workflows 04, 05). If a provider has changed a field name, the
   Code node will throw with a clear message rather than corrupt data.
 - **The SQL has not been executed** against a live Postgres — there was no database
   available in the environment where it was written. Run `0001_init.sql` first and read the

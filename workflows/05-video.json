@@ -30,20 +30,20 @@
             },
             {
               "id": "e2",
-              "name": "fal_video_endpoint",
-              "value": "https://queue.fal.run/fal-ai/kling-video/v1/standard/image-to-video",
+              "name": "kie_video_model",
+              "value": "kling/v2-1-standard",
               "type": "string"
             },
             {
               "id": "e3",
-              "name": "aspect_ratio",
-              "value": "9:16",
+              "name": "negative_prompt",
+              "value": "blur, distortion, warped faces, extra limbs, text, watermark, low quality",
               "type": "string"
             },
             {
               "id": "e4",
               "name": "poll_timeout_minutes",
-              "value": 10,
+              "value": 15,
               "type": "number"
             },
             {
@@ -61,7 +61,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [-620, 300],
-      "notes": "THIS IS THE EXPENSIVE WORKFLOW. It only ever sees jobs with use_video_gen = true. Keep it deactivated until the stills path is proven end to end (PLAN phase 5)."
+      "notes": "THIS IS THE EXPENSIVE WORKFLOW. It only ever sees jobs with use_video_gen = true. Keep it deactivated until the stills path is proven end to end (PLAN phase 5).\n\nkie_video_model must be a kie.ai image-to-video model that takes { prompt, image_url, duration: '5'|'10', negative_prompt, cfg_scale } — the kling/v2-1-* family does. Other families name their inputs differently; check docs.kie.ai before swapping. The clip takes its shape (9:16) from the input image."
     },
     {
       "parameters": {
@@ -156,7 +156,7 @@
           "name": "Supabase service_role"
         }
       },
-      "notes": "max_scenes is a hard spend ceiling: at roughly $0.40 per clip-second, a runaway 40-scene script is a real bill."
+      "notes": "max_scenes is a hard spend ceiling: every scene is a paid clip, so a runaway 40-scene script is a real bill."
     },
     {
       "parameters": {
@@ -206,29 +206,40 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $('Config').first().json.fal_video_endpoint }}",
+        "url": "https://api.kie.ai/api/v1/jobs/createTask",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"prompt\": {{ JSON.stringify(($json.motion_prompt || 'slow push in') + '. ' + ($json.image_prompt || '')) }},\n  \"image_url\": {{ JSON.stringify($json.image_url) }},\n  \"duration\": \"{{ Number($json.audio_duration_sec || 5) <= 5 ? '5' : '10' }}\",\n  \"aspect_ratio\": \"{{ $('Config').first().json.aspect_ratio }}\"\n}",
+        "jsonBody": "={{ JSON.stringify({ model: $('Config').first().json.kie_video_model, input: { prompt: ($json.motion_prompt || 'slow push in') + '. ' + ($json.image_prompt || ''), image_url: $json.image_url, duration: Number($json.audio_duration_sec || 5) <= 5 ? '5' : '10', negative_prompt: $('Config').first().json.negative_prompt, cfg_scale: 0.5 } }) }}",
         "options": {
           "timeout": 60000
         }
       },
       "id": "cg05-submit",
-      "name": "Submit Clip Job",
+      "name": "Submit Clip Job (kie)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [700, 340],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "FAL_CRED",
-          "name": "fal.ai"
+          "id": "KIE_CRED",
+          "name": "kie.ai"
         }
       },
       "onError": "continueErrorOutput",
-      "notes": "SOLVES THE FIXED-LENGTH PROBLEM (PLAN 7.2). The model only emits 5s or 10s. We request the shortest length that still COVERS the narration, then workflow 06 trims the clip down to the exact audio duration. A clip is allowed to be longer than its narration; it must never be shorter, or you get silence over a frozen frame."
+      "notes": "SOLVES THE FIXED-LENGTH PROBLEM (PLAN 7.2). The model only emits 5s or 10s. We request the shortest length that still COVERS the narration, then workflow 06 trims the clip down to the exact audio duration. A clip is allowed to be longer than its narration; it must never be shorter, or you get silence over a frozen frame.\n\nimage_url is the scene's public Supabase Storage URL, which kie.ai fetches directly."
+    },
+    {
+      "parameters": {
+        "jsCode": "// kie.ai can answer HTTP 200 with a failure code in the body (401 bad key,\n// 402 out of credits, 422 bad input), so check the body, not just the status.\nconst r = $input.first().json;\nif (r.code !== 200 || !r.data?.taskId) {\n  throw new Error('kie.ai rejected the clip task (' + r.code + '): ' + (r.msg || JSON.stringify(r).slice(0, 300)));\n}\nreturn [{ json: { task_id: r.data.taskId } }];"
+      },
+      "id": "cg05-accepted",
+      "name": "Task Accepted?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 340],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -238,21 +249,21 @@
         "genericAuthType": "httpCustomAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ provider_request_id: $json.request_id, status: 'submitted' }) }}",
+        "jsonBody": "={{ JSON.stringify({ provider_request_id: $json.task_id, status: 'submitted' }) }}",
         "options": {}
       },
       "id": "cg05-save-req",
       "name": "Save Request ID",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [920, 340],
+      "position": [1140, 340],
       "credentials": {
         "httpCustomAuth": {
           "id": "SUPABASE_CRED",
           "name": "Supabase service_role"
         }
       },
-      "notes": "Written BEFORE the first poll, deliberately. If n8n dies mid-poll, the request id survives and the clip can be collected later instead of paid for twice (PLAN 7.1)."
+      "notes": "Written BEFORE the first poll, deliberately. If n8n dies mid-poll, the kie taskId survives and the clip can be collected later instead of paid for twice (PLAN 7.1)."
     },
     {
       "parameters": {
@@ -272,7 +283,7 @@
       "name": "Start Poll Clock",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1030, 340],
+      "position": [1360, 340],
       "notes": "Stamps a per-scene deadline. This node re-runs for every scene, so .first() always returns THIS scene's deadline. Do not replace with a $runIndex counter: $runIndex accumulates across the whole execution, so with a poll loop nested inside a scene loop, a slow scene 1 would starve scene 2 of its retries."
     },
     {
@@ -284,14 +295,23 @@
       "name": "Wait 30s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [1140, 340],
+      "position": [1580, 340],
       "webhookId": "cg05-wait-webhook"
     },
     {
       "parameters": {
-        "url": "={{ $('Submit Clip Job').first().json.status_url }}",
+        "url": "https://api.kie.ai/api/v1/jobs/recordInfo",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "taskId",
+              "value": "={{ $('Task Accepted?').first().json.task_id }}"
+            }
+          ]
+        },
         "options": {
           "timeout": 30000
         }
@@ -300,22 +320,32 @@
       "name": "Check Status",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1360, 340],
+      "position": [1800, 340],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "FAL_CRED",
-          "name": "fal.ai"
+          "id": "KIE_CRED",
+          "name": "kie.ai"
         }
       },
       "retryOnFail": true,
-      "maxTries": 3,
-      "notes": "Uses the status_url fal handed back rather than a hand-built URL, so swapping video models needs no change here."
+      "maxTries": 3
+    },
+    {
+      "parameters": {
+        "jsCode": "// state: waiting | queuing | generating | success | fail\n// resultJson is a JSON *string* holding { resultUrls: [...] }.\nconst r = $input.first().json;\nconst d = r.data || {};\nconst task = $('Task Accepted?').first().json.task_id;\n\nif (d.state === 'fail') {\n  throw new Error('kie.ai clip task ' + task + ' failed: ' + (d.failMsg || d.failCode || 'no reason given'));\n}\nif (d.state === 'success') {\n  let result = {};\n  try { result = JSON.parse(d.resultJson || '{}'); } catch (e) {}\n  const url = result.resultUrls?.[0];\n  if (!url) throw new Error('kie.ai clip task ' + task + ' succeeded but returned no URL: ' + String(d.resultJson).slice(0, 300));\n  return [{ json: { state: 'success', url } }];\n}\n// Still running. `error` is only used if the poll deadline passes.\nreturn [{ json: {\n  state: d.state || 'unknown',\n  error: 'clip still ' + (d.state || 'pending') + ' when the poll deadline passed (kie task ' + task + ')'\n} }];"
+      },
+      "id": "cg05-parse",
+      "name": "Parse Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2020, 340],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
         "conditions": {
           "options": {
-            "caseSensitive": false,
+            "caseSensitive": true,
             "leftValue": "",
             "typeValidation": "loose",
             "version": 2
@@ -323,8 +353,8 @@
           "conditions": [
             {
               "id": "c1",
-              "leftValue": "={{ $json.status }}",
-              "rightValue": "COMPLETED",
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "success",
               "operator": {
                 "type": "string",
                 "operation": "equals"
@@ -339,7 +369,7 @@
       "name": "Clip ready?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1580, 340]
+      "position": [2240, 340]
     },
     {
       "parameters": {
@@ -369,35 +399,12 @@
       "name": "Poll again?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1580, 560],
+      "position": [2240, 560],
       "notes": "Per-scene wall-clock bound: keep polling until this scene's own deadline passes, then give up on it. Correct regardless of how long earlier scenes took."
     },
     {
       "parameters": {
-        "url": "={{ $('Submit Clip Job').first().json.response_url }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "options": {
-          "timeout": 60000
-        }
-      },
-      "id": "cg05-result",
-      "name": "Fetch Result",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1800, 240],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "FAL_CRED",
-          "name": "fal.ai"
-        }
-      },
-      "retryOnFail": true,
-      "maxTries": 3
-    },
-    {
-      "parameters": {
-        "url": "={{ $json.video?.url || $json.video_url || $json.output?.url }}",
+        "url": "={{ $json.url }}",
         "options": {
           "response": {
             "response": {
@@ -412,9 +419,10 @@
       "name": "Download Clip",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2020, 240],
+      "position": [2460, 240],
       "retryOnFail": true,
-      "maxTries": 3
+      "maxTries": 3,
+      "notes": "kie.ai deletes generated files after 14 days, so the clip is re-hosted in Storage."
     },
     {
       "parameters": {
@@ -444,7 +452,7 @@
       "name": "Upload to Storage",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2240, 240],
+      "position": [2680, 240],
       "credentials": {
         "httpCustomAuth": {
           "id": "SUPABASE_CRED",
@@ -469,7 +477,7 @@
       "name": "Update Scene",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2460, 240],
+      "position": [2900, 240],
       "credentials": {
         "httpCustomAuth": {
           "id": "SUPABASE_CRED",
@@ -558,7 +566,7 @@
       "name": "Retry or Park",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1140, 620],
+      "position": [1580, 640],
       "credentials": {
         "httpCustomAuth": {
           "id": "SUPABASE_CRED",
@@ -592,11 +600,17 @@
     },
     "Needs a clip?": {
       "main": [
-        [{ "node": "Submit Clip Job", "type": "main", "index": 0 }],
+        [{ "node": "Submit Clip Job (kie)", "type": "main", "index": 0 }],
         [{ "node": "Loop Scenes", "type": "main", "index": 0 }]
       ]
     },
-    "Submit Clip Job": {
+    "Submit Clip Job (kie)": {
+      "main": [
+        [{ "node": "Task Accepted?", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Park", "type": "main", "index": 0 }]
+      ]
+    },
+    "Task Accepted?": {
       "main": [
         [{ "node": "Save Request ID", "type": "main", "index": 0 }],
         [{ "node": "Retry or Park", "type": "main", "index": 0 }]
@@ -612,11 +626,17 @@
       "main": [[{ "node": "Check Status", "type": "main", "index": 0 }]]
     },
     "Check Status": {
-      "main": [[{ "node": "Clip ready?", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Parse Status", "type": "main", "index": 0 }]]
+    },
+    "Parse Status": {
+      "main": [
+        [{ "node": "Clip ready?", "type": "main", "index": 0 }],
+        [{ "node": "Retry or Park", "type": "main", "index": 0 }]
+      ]
     },
     "Clip ready?": {
       "main": [
-        [{ "node": "Fetch Result", "type": "main", "index": 0 }],
+        [{ "node": "Download Clip", "type": "main", "index": 0 }],
         [{ "node": "Poll again?", "type": "main", "index": 0 }]
       ]
     },
@@ -625,9 +645,6 @@
         [{ "node": "Wait 30s", "type": "main", "index": 0 }],
         [{ "node": "Retry or Park", "type": "main", "index": 0 }]
       ]
-    },
-    "Fetch Result": {
-      "main": [[{ "node": "Download Clip", "type": "main", "index": 0 }]]
     },
     "Download Clip": {
       "main": [[{ "node": "Upload to Storage", "type": "main", "index": 0 }]]

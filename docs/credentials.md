@@ -58,16 +58,18 @@ last segment of the URL. That goes in workflow 03's Config node, not here.
 
 ---
 
-## 4. `fal.ai` — type: **Header Auth**
+## 4. `kie.ai` — type: **Header Auth**
 
 | Field | Value |
 |---|---|
 | Name | `Authorization` |
-| Value | `Key YOUR_FAL_KEY` |
+| Value | `Bearer YOUR_KIE_KEY` |
 
-Note the literal word `Key`, not `Bearer`. Key from <https://fal.ai/dashboard/keys>.
+Note the word `Bearer` and one space before the key. Key from <https://kie.ai/api-key>.
 
-One credential serves both workflow 04 (images) and 05 (video).
+One credential serves both workflow 04 (images) and 05 (video). kie.ai bills from a
+prepaid credit balance, so top it up before the first run — an empty balance shows up in
+`jobs.last_error` as `kie.ai rejected the image task (402)`.
 
 ---
 
@@ -113,8 +115,8 @@ so you can see and change it without digging through credentials.
 | 01 | `model_ideation`, `angles_per_topic`, `use_video_gen`, `width`, `height` |
 | 02 | `model_script`, `target_duration_sec` |
 | 03 | `voice_id`, `tts_model` |
-| 04 | `fal_image_endpoint`, `image_width`, `image_height` |
-| 05 | `fal_video_endpoint`, `aspect_ratio`, `poll_timeout_minutes`, `max_scenes` |
+| 04 | `kie_image_model`, `aspect_ratio`, `poll_timeout_minutes` |
+| 05 | `kie_video_model`, `negative_prompt`, `poll_timeout_minutes`, `max_scenes` |
 | 06 | `shotstack_env`, `show_captions` |
 | 07 | `drive_parent_folder_id`, `sheet_id`, `sheet_name`, `cleanup_after_upload` |
 | 99 | `stale_minutes` |
