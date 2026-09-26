@@ -126,6 +126,7 @@
   textarea:focus, input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   .row { display: flex; gap: 8px; align-items: center; }
   .hint { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+  label.field { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
 
   /* ---------- tabs ---------- */
   .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
@@ -334,15 +335,18 @@
 
       <aside style="display:grid; gap:20px">
         <section class="card">
-          <div class="card-h"><h2>New topic</h2></div>
+          <div class="card-h"><h2>New video</h2></div>
           <form class="card-b" id="topicForm">
-            <textarea id="topicInput" maxlength="500" placeholder="e.g. Why most people quit the gym in February" required></textarea>
+            <label class="field" for="topicInput">Idea</label>
+            <textarea id="topicInput" maxlength="500" style="min-height:60px" placeholder="e.g. Why most people quit the gym in February"></textarea>
+            <label class="field" for="refInput" style="margin-top:10px">Reference text <span class="muted">(optional)</span></label>
+            <textarea id="refInput" maxlength="8000" style="min-height:120px" placeholder="Paste an article, post, notes or script. The video's script, voiceover and images are built from it."></textarea>
             <div class="row" style="margin-top:10px">
-              <span class="muted" style="font-size:12px" id="topicCount">0 / 500</span>
+              <span class="muted" style="font-size:12px" id="topicCount">0 / 8000</span>
               <div class="spacer"></div>
-              <button class="btn primary" type="submit" id="topicBtn">Add topic</button>
+              <button class="btn primary" type="submit" id="topicBtn">Add</button>
             </div>
-            <p class="hint">Workflow 01 turns each topic into one or more video angles on its next run.</p>
+            <p class="hint">Give an idea, a reference, or both. The finished video lands in Google Sheets.</p>
           </form>
         </section>
 
@@ -568,7 +572,7 @@
       const made = state.jobs.filter(j => j.topic_id === t.id).length;
       return `<li>
         <div class="t"><div class="txt">${esc(t.raw_topic)}</div><span class="pill ${cls}">${esc(t.status)}</span></div>
-        <div class="sub">${esc(ago(t.created_at))}${made ? ` · ${made} video${made > 1 ? 's' : ''}` : ''}${t.source && t.source !== 'manual' ? ` · ${esc(t.source)}` : ''}</div>
+        <div class="sub">${esc(ago(t.created_at))}${t.reference ? ' · with reference' : ''}${made ? ` · ${made} video${made > 1 ? 's' : ''}` : ''}${t.source && t.source !== 'manual' ? ` · ${esc(t.source)}` : ''}</div>
         ${t.last_error ? `<div class="sub" style="color:var(--bad)">${esc(t.last_error)}</div>` : ''}
       </li>`;
     }).join('') : '<li class="muted">No topics yet.</li>';
@@ -662,6 +666,7 @@
         <dl class="kv">
           <dt>Hook</dt><dd>${esc(job.hook || '–')}</dd>
           <dt>Audience</dt><dd>${esc(job.audience || '–')}</dd>
+          ${job.reference ? `<dt>Reference</dt><dd style="white-space:pre-wrap; max-height:160px; overflow:auto">${esc(job.reference)}</dd>` : ''}
           <dt>Style</dt><dd>${esc(job.style_suffix || '–')}</dd>
           <dt>Format</dt><dd>${esc(job.aspect || '')} · ${esc(job.width)}×${esc(job.height)}${job.use_video_gen ? ' · video generation on' : ' · stills (Ken Burns)'}</dd>
           <dt>Length</dt><dd>${job.voice_duration_sec ? esc(Math.round(job.voice_duration_sec)) + 's' : '–'} · ${scenes.length} scenes</dd>
@@ -760,25 +765,28 @@
     render();
   });
 
-  $('topicInput').addEventListener('input', e => { $('topicCount').textContent = `${e.target.value.length} / 500`; });
+  $('refInput').addEventListener('input', e => { $('topicCount').textContent = `${e.target.value.length} / 8000`; });
   $('topicForm').addEventListener('submit', async e => {
     e.preventDefault();
     const topic = $('topicInput').value.trim();
-    if (topic.length < 3) return toast('Topic is too short', true);
+    const reference = $('refInput').value.trim();
+    if (!topic && !reference) return toast('Add an idea or a reference text', true);
+    if (topic && topic.length < 3) return toast('Idea is too short', true);
     const btn = $('topicBtn');
     btn.disabled = true;
     btn.innerHTML = '<span class="spin"></span> Adding…';
     try {
-      await api('topic', { topic });
+      await api('topic', { topic, reference });
       $('topicInput').value = '';
-      $('topicCount').textContent = '0 / 500';
-      toast('Topic added. Workflow 01 picks it up on its next run.');
+      $('refInput').value = '';
+      $('topicCount').textContent = '0 / 8000';
+      toast('Added. Workflow 01 picks it up on its next run.');
       refresh();
     } catch (err) {
       toast(err.message, true);
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Add topic';
+      btn.textContent = 'Add';
     }
   });
 

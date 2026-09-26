@@ -47,7 +47,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Auth + input validation for every route. Anything that reaches a Supabase\n// URL below has been checked here first — job ids especially, since they\n// are interpolated into PostgREST filters.\nconst cfg = $('Config').first().json;\nconst req = $('Webhook').first().json;\nconst body = req.body && typeof req.body === 'object' ? req.body : {};\nconst fail = (code, error) => [{ json: { action: 'error', code, body: { ok: false, error } } }];\n\nif (!cfg.dashboard_key || cfg.dashboard_key === 'CHANGE_ME') {\n  return fail(500, 'Set dashboard_key in the Config node of workflow 10 first');\n}\nif (body.key !== cfg.dashboard_key) return fail(401, 'Wrong dashboard key');\n\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst action = String(body.action || '');\n\nif (action === 'status') return [{ json: { action } }];\n\nif (action === 'job' || action === 'retry') {\n  const jobId = String(body.job_id || '');\n  if (!UUID.test(jobId)) return fail(400, 'job_id must be a UUID');\n  const from = String(body.from || 'auto');\n  const FROM = ['auto', 'script', 'voice', 'images', 'video', 'render', 'deliver'];\n  if (action === 'retry' && !FROM.includes(from)) {\n    return fail(400, 'from must be one of: ' + FROM.join(', '));\n  }\n  return [{ json: { action, job_id: jobId.toLowerCase(), from } }];\n}\n\nif (action === 'topic') {\n  const topic = String(body.topic || '').trim();\n  if (topic.length < 3 || topic.length > 500) return fail(400, 'Topic must be 3-500 characters');\n  return [{ json: { action, topic } }];\n}\n\nreturn fail(400, 'Unknown action: ' + action);"
+        "jsCode": "// Auth + input validation for every route. Anything that reaches a Supabase\n// URL below has been checked here first — job ids especially, since they\n// are interpolated into PostgREST filters.\nconst cfg = $('Config').first().json;\nconst req = $('Webhook').first().json;\nconst body = req.body && typeof req.body === 'object' ? req.body : {};\nconst fail = (code, error) => [{ json: { action: 'error', code, body: { ok: false, error } } }];\n\nif (!cfg.dashboard_key || cfg.dashboard_key === 'CHANGE_ME') {\n  return fail(500, 'Set dashboard_key in the Config node of workflow 10 first');\n}\nif (body.key !== cfg.dashboard_key) return fail(401, 'Wrong dashboard key');\n\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst action = String(body.action || '');\n\nif (action === 'status') return [{ json: { action } }];\n\nif (action === 'job' || action === 'retry') {\n  const jobId = String(body.job_id || '');\n  if (!UUID.test(jobId)) return fail(400, 'job_id must be a UUID');\n  const from = String(body.from || 'auto');\n  const FROM = ['auto', 'script', 'voice', 'images', 'video', 'render', 'deliver'];\n  if (action === 'retry' && !FROM.includes(from)) {\n    return fail(400, 'from must be one of: ' + FROM.join(', '));\n  }\n  return [{ json: { action, job_id: jobId.toLowerCase(), from } }];\n}\n\nif (action === 'topic') {\n  const reference = String(body.reference || '').trim();\n  if (reference.length > 8000) return fail(400, 'Reference must be at most 8000 characters');\n  let topic = String(body.topic || '').trim();\n  // A reference on its own is enough; its first line stands in as the topic.\n  if (!topic && reference) {\n    const line = reference.split('\\n').find(l => l.trim()).trim();\n    topic = line.length > 120 ? line.slice(0, 117) + '...' : line;\n  }\n  if (topic.length < 3 || topic.length > 500) {\n    return fail(400, 'Give an idea (3-500 characters) or a reference text');\n  }\n  return [{ json: { action, topic, reference: reference || null } }];\n}\n\nreturn fail(400, 'Unknown action: ' + action);"
       },
       "id": "cg10-validate",
       "name": "Validate Request",
@@ -159,7 +159,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/topics?select=id,raw_topic,source,status,attempts,last_error,created_at&order=created_at.desc&limit=50",
+        "url": "={{ $('Config').first().json.supabase_url }}/rest/v1/topics?select=id,raw_topic,reference,source,status,attempts,last_error,created_at&order=created_at.desc&limit=50",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpCustomAuth",
         "options": {}
@@ -256,7 +256,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ raw_topic: $json.topic, source: 'dashboard' }) }}",
+        "jsonBody": "={{ JSON.stringify({ raw_topic: $json.topic, reference: $json.reference, source: 'dashboard' }) }}",
         "options": {}
       },
       "id": "cg10-insert-topic",

@@ -16,6 +16,7 @@ See [PLAN.md](PLAN.md) for the reasoning behind the architecture. This file is t
 supabase/migrations/
   0001_init.sql        schema, claim functions, storage buckets, status view
   0002_seed.sql        two sample topics (optional)
+  0003_reference.sql   reference text on topics and jobs
 
 workflows/
   01-intake-ideation.json   topic  -> angles -> job rows
@@ -44,7 +45,7 @@ your Google OAuth before you have spent a cent on generation.
 ### Phase 0 — Database
 
 1. Create a Supabase project.
-2. SQL Editor → paste `supabase/migrations/0001_init.sql` → Run.
+2. SQL Editor → paste `supabase/migrations/0001_init.sql` → Run. Then run `0003_reference.sql`.
 3. Verify: `select * from pipeline_status;` returns an empty table, not an error.
 4. Confirm four buckets exist under **Storage**: `audio`, `images`, `clips`, `renders`.
 
@@ -155,7 +156,7 @@ The API is one POST endpoint; the body's `action` picks the route:
 |---|---|---|
 | `status` | – | last 100 jobs with scene progress, last 50 topics |
 | `job` | `job_id` | one job with its scenes and event log |
-| `topic` | `topic` | inserts a row into `topics` |
+| `topic` | `topic` and/or `reference` | inserts a row into `topics`; the reference text is what the script, voice and images are built from |
 | `retry` | `job_id`, `from` | resets the job to re-run from `script` / `voice` / `images` / `video` / `render` / `deliver`, or `auto` (first stage whose output is missing) |
 
 Every request also carries `key`. Retry refuses jobs a worker currently holds, and the

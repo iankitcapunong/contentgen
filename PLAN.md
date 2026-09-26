@@ -346,5 +346,7 @@ video generation.
 1. **Render engine** — Creatomate (fast, ~$41/mo) vs self-hosted ffmpeg (free, custom Docker)?
 2. **n8n hosting** — Cloud (no Execute Command, execution caps) vs self-hosted VPS?
 3. **Format** — 9:16 shorts or 16:9 long-form? Changes the render template and the scene count.
-4. **Review gate** — fully automatic, or human approval after the script stage?
+4. ~~**Review gate**~~ — decided: fully automatic. The client gives only an idea and/or reference
+   text; the pipeline runs unattended and the output lands in the Google Sheet. Whoever reads the
+   Sheet decides what gets posted (`Posted?` column).
 5. **Voice** — one fixed ElevenLabs voice, or per-topic selection?
